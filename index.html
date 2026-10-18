@@ -48,7 +48,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .chip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .chip i{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
 .seg{display:flex;background:var(--soft);border-radius:12px;padding:3px;margin:0 0 12px}
-.seg button{flex:1;background:none;border:0;border-radius:9px;padding:8px 4px;font-size:.85rem;color:var(--muted)}
+.seg{overflow-x:auto;scrollbar-width:none}.seg::-webkit-scrollbar{display:none}
+.seg button{flex:1;white-space:nowrap;background:none;border:0;border-radius:9px;padding:8px 4px;font-size:.85rem;color:var(--muted)}
 .seg button.on{background:var(--card);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .field{width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 12px;font:inherit;font-size:.95rem;color:var(--ink);margin:0 0 8px}
 textarea.field{min-height:96px;resize:vertical;line-height:1.5}
@@ -337,14 +338,21 @@ const MODES=[
  {id:'low',label:'Hibernate',c:'#8a63d2',d:'Low energy. Gentle tasks only. Counts as recovery, not lost time.'},
  {id:'rest',label:'Rest',c:'#d34f9a',d:'Break, meal, downtime'},
  {id:'travel',label:'Travel',c:'#7a8599',d:'On the move'},
- {id:'sleep',label:'Sleep',c:'#4b3fb8',d:'Sleeping'}];
+ {id:'sleep',label:'Sleep',c:'#4b3fb8',d:'Sleeping'},
+ {id:'drift',label:'Drift',c:'#9aa0b4',d:'Time that slipped away',hidden:true}];
 const PRODUCTIVE=['work','meeting','learn','read','deep'];
 const modeOf=id=>MODES.find(m=>m.id===id)||MODES[0];
 
 /* ---------- state ---------- */
+const DEFAULT_ACTS=[
+ {id:'scroll',name:'Scrolling social media',kind:'drift'},{id:'video',name:'Watching videos or TV',kind:'drift'},{id:'gaming',name:'Gaming',kind:'drift'},
+ {id:'snack',name:'Snacking',kind:'drift'},{id:'news',name:'Browsing news',kind:'drift'},{id:'shop',name:'Online shopping',kind:'drift'},
+ {id:'nap',name:'Napping',kind:'restore'},{id:'walk',name:'Walking',kind:'restore'},{id:'stretch',name:'Stretching',kind:'restore'},{id:'music',name:'Music or listening',kind:'restore'},{id:'talk',name:'Talking with someone',kind:'restore'},{id:'quiet',name:'Quiet or prayer',kind:'restore'},
+ {id:'chores',name:'Chores or errands',kind:'neutral'}];
 const DEFAULT_RITUAL=['Phone out of reach and silent','Notifications off','Water nearby','One clear target written down'];
-function emptyState(){return{v:1,reviews:[],carry:{},replans:{},identity:{now:'',becoming:'',links:[]},ideas:[],north:null,chapters:[],between:null,energy:{},minDay:{},focus:{ritual:DEFAULT_RITUAL.slice(),chime:true},profile:{sleep:{start:'23:30',hours:6},override:{},peak:'afternoon',h24:false},buckets:[],items:[],oneoffs:[],moves:{},done:{},progress:{},log:[],goals:[],notes:{routine:'',habits:'',goal:''},active:null,sample:false,created:nowMs()}}
+function emptyState(){return{v:1,acts:DEFAULT_ACTS.map(a=>Object.assign({},a)),behav:{ask:true,caps:{}},reviews:[],carry:{},replans:{},identity:{now:'',becoming:'',links:[]},ideas:[],north:null,chapters:[],between:null,energy:{},minDay:{},focus:{ritual:DEFAULT_RITUAL.slice(),chime:true},profile:{sleep:{start:'23:30',hours:6},override:{},peak:'afternoon',h24:false},buckets:[],items:[],oneoffs:[],moves:{},done:{},progress:{},log:[],goals:[],notes:{routine:'',habits:'',goal:''},active:null,sample:false,created:nowMs()}}
 function migrate(j){
+  j.acts=j.acts||DEFAULT_ACTS.map(a=>Object.assign({},a));j.behav=j.behav||{ask:true,caps:{}};if(!j.behav.caps)j.behav.caps={};
   j.energy=j.energy||{};j.reviews=j.reviews||[];j.carry=j.carry||{};j.replans=j.replans||{};
   j.identity=j.identity||{now:'',becoming:'',links:[]};j.ideas=j.ideas||[];j.chapters=j.chapters||[];
   if(j.north===undefined)j.north=null;if(j.between===undefined)j.between=null;
@@ -481,7 +489,7 @@ function stopMode(silent){
   if(!silent&&!(entry&&entry.mode==='deep'))toast('Logged '+dur((t-a.start)/60000));
   return entry;
 }
-function addLog(mode,start,end,extra){S.log.push(Object.assign({id:uid(),start,end,mode},extra||{}));persist()}
+function addLog(mode,start,end,extra){const e=Object.assign({id:uid(),start,end,mode},extra||{});S.log.push(e);persist();return e}
 function lastEnd(){let m=0;S.log.forEach(l=>{if(l.end>m)m=l.end});return m}
 
 /* ---------- rhythm: recommendations ---------- */
@@ -786,6 +794,100 @@ function reviewSuggestions(tm){
   if(S.north&&S.north.hoursPerWeek&&northHours(last)<S.north.hoursPerWeek*.6){const it=S.items.filter(i=>i.type==='flex'&&!i.paused&&(i.links||[]).some(id=>(S.north.links||[]).includes(id)))[0];if(it)out.push({text:'Your goal got '+northHours(last).toFixed(1)+' of '+S.north.hoursPerWeek+' hours last week. Add a session of '+it.title+'.',apply:()=>addSession(it)})}
   return out.slice(0,6);
 }
+/* ---------- behavior analytics: what you do, what you reach for, and when ---------- */
+const actById=id=>S.acts.find(a=>a.id===id);
+const KIND_C={drift:'#e0603a',restore:'#1fa67a',neutral:'#7a8599'};
+const logMin=l=>(l.end-l.start)/60000;
+function catOf(l){
+  if(l.mode==='drift')return 'drift';
+  if((l.acts||[]).some(id=>(actById(id)||{}).kind==='drift'))return 'drift';
+  if(l.mode==='work'||l.mode==='meeting'||l.mode==='deep')return 'work';
+  if(l.mode==='learn'||l.mode==='read')return 'growth';
+  if(l.mode==='low')return 'hibernate';
+  if(l.mode==='rest')return 'rest';
+  return l.mode;
+}
+function labelsOf(l){
+  const out=[];
+  (l.acts||[]).forEach(id=>{const a=actById(id);if(a)out.push({k:'a:'+a.id,label:a.name,kind:a.kind})});
+  if(out.length)return out;
+  const it=l.itemId&&itemById(l.itemId);
+  if(it)return [{k:'i:'+it.id,label:it.title,kind:'item'}];
+  if(l.bucket&&bucketById(l.bucket))return [{k:'b:'+l.bucket,label:bname(l.bucket),kind:'bucket'}];
+  return [{k:'m:'+l.mode,label:modeOf(l.mode).label,kind:'mode'}];
+}
+function periodRange(per){
+  const d=whereIs(nowMs()).date,n=per==='today'?1:per==='28'?28:7;
+  return{from:addDays(d,-(n-1)).getTime(),to:addDays(d,1).getTime(),days:n};
+}
+const HEAT=['work','growth','rest','drift'];
+function behaviorStats(per){
+  const R=periodRange(per),logs=S.log.filter(l=>l.start>=R.from&&l.start<R.to&&l.mode!=='sleep'&&logMin(l)>=1);
+  const tot={},acts={},work={},habit={},drift={},heat={};HEAT.forEach(k=>heat[k]=Array(12).fill(0));let total=0;
+  logs.forEach(l=>{
+    const m=logMin(l),c=catOf(l),lb=labelsOf(l);total+=m;tot[c]=(tot[c]||0)+m;
+    lb.forEach(x=>{const o=acts[x.k]=acts[x.k]||{label:x.label,kind:x.kind,min:0,n:0,cat:c};o.min+=m/lb.length;o.n++});
+    if(c==='work'){const it=l.itemId&&itemById(l.itemId),k=it?it.title:(l.bucket&&bucketById(l.bucket)?bname(l.bucket):modeOf(l.mode).label);const o=work[k]=work[k]||{label:k,min:0,n:0};o.min+=m;o.n++}
+    if(c==='drift')lb.forEach(x=>{const o=drift[x.k]=drift[x.k]||{label:x.label,min:0,n:0,during:{}};o.min+=m/lb.length;o.n++;if(l.during)o.during[l.during]=(o.during[l.during]||0)+1});
+    if(l.itemId&&c!=='drift'){const it=itemById(l.itemId);if(it&&it.type==='flex'){const o=habit[it.id]=habit[it.id]||{label:it.title,min:0,n:0};o.min+=m;o.n++}}
+    const hc=c==='hibernate'?'rest':HEAT.indexOf(c)>=0?c:null;
+    if(hc)for(let t=l.start;t<l.end;t+=600000)heat[hc][Math.floor(new Date(t).getHours()/2)]+=10;
+  });
+  const top=o=>Object.values(o).sort((a,b)=>b.min-a.min);
+  return{R,logs,total,tot,acts:top(acts),work:top(work),habit:Object.values(habit).sort((a,b)=>b.n-a.n||b.min-a.min),drift:top(drift),heat};
+}
+function hyperProfile(per){
+  const R=periodRange(per),ss=deepSessions().filter(l=>l.start>=R.from&&l.start<R.to),by={},tags={},bins=Array(12).fill(0),during={};
+  ss.forEach(l=>{const it=l.itemId&&itemById(l.itemId),k=it?it.title:(l.intent||(l.bucket&&bucketById(l.bucket)?bname(l.bucket):'Unlabelled'));const o=by[k]=by[k]||{label:k,min:0,n:0};o.min+=logMin(l);o.n++;(l.tags||[]).forEach(t=>tags[t]=(tags[t]||0)+1);bins[Math.floor(new Date(l.start).getHours()/2)]+=logMin(l)});
+  S.log.filter(l=>l.mode==='drift'&&l.during==='deep'&&l.start>=R.from&&l.start<R.to).forEach(l=>(l.acts||[]).forEach(id=>{const a=actById(id);if(a)during[a.name]=(during[a.name]||0)+logMin(l)}));
+  const rated=ss.filter(l=>l.rating),min=ss.reduce((a,l)=>a+logMin(l),0);
+  return{n:ss.length,min,avg:ss.length?min/ss.length:0,items:Object.values(by).sort((a,b)=>b.min-a.min),tags:Object.entries(tags).sort((a,b)=>b[1]-a[1]),during:Object.entries(during).sort((a,b)=>b[1]-a[1]),bins,worth:rated.length?rated.filter(l=>l.rating==='worth').length/rated.length:null,avgInt:ss.length?ss.reduce((a,l)=>a+(l.interrupts||0),0)/ss.length:0};
+}
+function hibProfile(per){
+  const R=periodRange(per),hs=S.log.filter(l=>l.mode==='low'&&l.start>=R.from&&l.start<R.to&&logMin(l)>=5),acts={},bins=Array(12).fill(0);let undesc=0,afterDeep=0,lowSleep=0,heavy=0;
+  hs.forEach(l=>{
+    if(!(l.acts||[]).length)undesc++;
+    (l.acts||[]).forEach(id=>{const a=actById(id);if(a){const o=acts[a.id]=acts[a.id]||{label:a.name,kind:a.kind,min:0,n:0};o.min+=logMin(l)/l.acts.length;o.n++}});
+    bins[Math.floor(new Date(l.start).getHours()/2)]+=logMin(l);
+    if(S.log.some(d=>d.mode==='deep'&&logMin(d)>=60&&d.end<=l.start&&l.start-d.end<=3*3600000))afterDeep++;
+    const sl=S.log.filter(d=>d.mode==='sleep'&&d.end<=l.start&&l.start-d.end<=18*3600000).sort((a,b)=>b.end-a.end)[0];if(sl&&logMin(sl)<330)lowSleep++;
+    const dt=new Date(l.start);if(commit(new Date(dt.getFullYear(),dt.getMonth(),dt.getDate()))>=360)heavy++;
+  });
+  const min=hs.reduce((a,l)=>a+logMin(l),0);
+  return{n:hs.length,min,avg:hs.length?min/hs.length:0,acts:Object.values(acts).sort((a,b)=>b.min-a.min),undesc,bins,afterDeep,lowSleep,heavy};
+}
+const binLabel=b=>f12(b*120)+' to '+f12(b*120+120);
+const binBetween=b=>f12(b*120)+' and '+f12(b*120+120);
+function topBin(bins){let b=-1,v=0;bins.forEach((x,i)=>{if(x>v){v=x;b=i}});return b<0?null:{b,v,share:v/bins.reduce((a,c)=>a+c,0)}}
+function driftBySleep(){
+  const R=periodRange('28'),low=[],ok=[];
+  for(let n=0;n<28;n++){
+    const d0=addDays(new Date(R.to-864e5),-n),a=new Date(d0.getFullYear(),d0.getMonth(),d0.getDate()).getTime(),b=a+864e5;
+    const sl=S.log.find(l=>l.mode==='sleep'&&l.end>=a&&l.end<a+12*36e5);if(!sl)continue;
+    let dm=0;S.log.forEach(l=>{if(l.start>=a&&l.start<b&&catOf(l)==='drift')dm+=logMin(l)});
+    (logMin(sl)<330?low:ok).push(dm);
+  }
+  const avg=x=>x.reduce((a,c)=>a+c,0)/x.length;
+  return(low.length>=3&&ok.length>=3)?{low:avg(low),ok:avg(ok),nl:low.length,no:ok.length}:null;
+}
+function behaviorInsights(per){
+  const out=[],B=behaviorStats(per),H=hibProfile('28'),dr=B.tot.drift||0,days=B.R.days;
+  if(B.total&&dr){out.push('About '+Math.round(dr/B.total*100)+'% of your tracked time was drift'+(B.drift[0]?', mostly '+B.drift[0].label+' ('+dur(B.drift[0].min/days)+' a day on average).':'.'))}
+  const pk=topBin(B.heat.drift);if(pk&&pk.share>=.28&&B.tot.drift>=60)out.push('Your drift peaks between '+binBetween(pk.b)+'. That is when you are most likely to slip, so keep important work away from it, or plan a deliberate break there.');
+  const ds=driftBySleep();if(ds&&ds.low>=ds.ok*1.4)out.push('On days after under 5.5 hours of sleep you drifted '+dur(ds.low)+' on average, against '+dur(ds.ok)+' after better nights. Sleep is the lever.');
+  if(H.n>=3&&H.afterDeep/H.n>=.4)out.push(H.afterDeep+' of your '+H.n+' hibernate sessions came within three hours of a 60+ minute hyperfocus session. Your low-energy time may be the bill for deep focus, so plan recovery after long sessions.');
+  if(H.n>=3&&H.lowSleep/H.n>=.4)out.push(H.lowSleep+' of '+H.n+' hibernate sessions followed a night under 5.5 hours of sleep.');
+  return out.slice(0,4);
+}
+function todayActMin(actId){
+  const d=whereIs(nowMs()).date,a=d.getTime(),b=a+864e5;let m=0;
+  S.log.forEach(l=>{if(l.start>=a&&l.start<b&&(l.acts||[]).includes(actId))m+=logMin(l)/l.acts.length});
+  return m;
+}
+function capStatus(){
+  return S.acts.filter(a=>(S.behav.caps||{})[a.id]>0).map(a=>({a,used:todayActMin(a.id),cap:S.behav.caps[a.id]})).filter(x=>x.used>=x.cap*.8);
+}
+function undescribed(){return S.log.filter(l=>(l.mode==='rest'||l.mode==='low')&&!(l.acts||[]).length&&!l.itemId&&logMin(l)>=5&&!l.sample).sort((a,b)=>b.start-a.start)}
 /* ---------- templates, accepting sorted proposals, example data ---------- */
 function mkBuckets(list){return list.map(([name,acts],i)=>({id:uid(),name,color:PALETTE[i%PALETTE.length],activities:acts.map(a=>({id:uid(),name:a}))}))}
 const TEMPLATES={
@@ -826,6 +928,7 @@ function loadTemplate(key){
 /* four weeks of believable history, with different habit shapes, so stats, curves and the focus lab have something to read */
 function makeSampleHistory(){
   let seed=7;const rnd=()=>{seed=(seed*1664525+1013904223)%4294967296;return seed/4294967296};
+  let seed2=11;const rnd2=()=>{seed2=(seed2*1664525+1013904223)%4294967296;return seed2/4294967296};
   const today=whereIs(nowMs()).date,DAYSBACK=28;
   S.log=S.log.filter(l=>!l.sample);
   const habitP=(title,frac)=>{const t=title.toLowerCase();
@@ -859,6 +962,19 @@ function makeSampleHistory(){
     [2.0,2.7,2.1].forEach((m,bi)=>{const v=Math.max(1,Math.min(3,Math.round(m+(rnd()-.5)*1.4))),k=energyKey(date,bi);if(!S.energy[k]){S.energy[k]=v;(S.sampleEnergy=S.sampleEnergy||[]).push(k)}});
     const ss=base-dm.sh*60000+Math.round((rnd()-.4)*40)*60000;
     S.log.push({id:uid(),start:ss,end:ss+(5.4+rnd()*1.6)*3600000,mode:'sleep',sample:true});
+    /* behavior: drift and hibernate, from their own random stream so the history above is unchanged */
+    const slp=S.log[S.log.length-1],lowSleep=logMin(slp)<330,d0=date.getTime(),hr=h=>d0+h*3600000;
+    const nDrift=lowSleep?2+Math.floor(rnd2()*2):Math.floor(rnd2()*2.2);
+    for(let k=0;k<nDrift;k++){
+      const r=rnd2(),pick=r<.42?'scroll':r<.68?'video':r<.82?'snack':r<.92?'news':'gaming';
+      const hour=pick==='video'?21+rnd2()*2:pick==='snack'?15+rnd2()*2:16+rnd2()*2.5,len=10+Math.floor(rnd2()*5)*8,st=hr(hour);
+      S.log.push({id:uid(),start:st,end:st+len*60000,mode:'drift',acts:[pick],quick:true,during:(hour<17&&rnd2()<.5)?'work':null,sample:true});
+    }
+    const dt=S.log.filter(l=>l.sample&&l.mode==='deep'&&l.start>=d0&&l.start<d0+864e5).sort((a,b)=>b.end-a.end)[0],longDeep=dt&&logMin(dt)>=75;
+    if(rnd2()<(lowSleep?.5:.1)+(longDeep?.4:0)){
+      const st=longDeep?dt.end+(20+Math.floor(rnd2()*60))*60000:hr(14.5+rnd2()*2.5),len=30+Math.floor(rnd2()*4)*15,r=rnd2(),a=r<.38?'nap':r<.7?'scroll':r<.88?'video':'walk';
+      S.log.push({id:uid(),start:st,end:st+len*60000,mode:'low',acts:rnd2()<.85?[a]:[],planned:60,sample:true});
+    }
   }
   S.sample=true;persist();
 }
@@ -944,8 +1060,10 @@ function updateLive(){
 function currentEntry(w,pl){return pl.entries.find(e=>!e.unplaced&&e.mins>0&&!e.inRest&&e.s<=w.off&&w.off<e.e)||null}
 function begin(id,extra){
   const w=whereIs(nowMs()),cur=currentEntry(w,planDay(w.date));
-  const link=cur&&(cur.fixed||cur.kind!=='due')?{bucket:cur.bucket,itemId:cur.itemId}:{};
+  const linkable=['work','meeting','learn','read','deep'].includes(id),link=linkable&&cur&&(cur.fixed||cur.kind!=='due')?{bucket:cur.bucket,itemId:cur.itemId}:{};
+  const prev=S.active?{mode:S.active.mode,start:S.active.start}:null;
   startMode(id,Object.assign(link,extra||{}));render();
+  if(prev&&(prev.mode==='rest'||prev.mode==='low')){const en=S.log.find(l=>l.start===prev.start&&l.mode===prev.mode);maybeAsk(en)}
 }
 function vToday(m){
   const t=nowMs(),w=whereIs(t),date=w.date,dm=w.dm,pl=planDay(date),mon=dkey(mondayOf(date));
@@ -988,7 +1106,7 @@ function vToday(m){
   // time checker nudge
   if(!a&&!w.inRest&&(!S.nudgeSkip||t-S.nudgeSkip>30*60000)){
     const ref=Math.max(lastEnd(),w.dayStart),gap=(t-ref)/60000;
-    if(gap>=60)m.append(el('div',{class:'nudge'},el('b',{text:'Where did the last hour go?'}),el('p',{class:'hint',style:'margin:4px 0 10px',text:'You have not set a mode for '+dur(gap)+'. Tap what you were doing and Quarters will log it.'}),el('div',{class:'row'},['work','meeting','learn','read','rest','travel'].map(id=>el('button',{class:'chip',style:'border-color:'+modeOf(id).c,text:modeOf(id).label,onclick:()=>{const st=Math.max(ref,t-60*60000);addLog(id,st,t,cur?{bucket:cur.bucket,itemId:cur.itemId}:{});toast('Logged the last hour as '+modeOf(id).label);render()}})),el('button',{class:'ghost sm',text:'Not now',onclick:()=>{S.nudgeSkip=nowMs();persist();render()}}))));
+    if(gap>=60)m.append(el('div',{class:'nudge'},el('b',{text:'Where did the last hour go?'}),el('p',{class:'hint',style:'margin:4px 0 10px',text:'You have not set a mode for '+dur(gap)+'. Tap what you were doing and Quarters will log it.'}),el('div',{class:'row'},['work','meeting','learn','read','rest','travel'].map(id=>el('button',{class:'chip',style:'border-color:'+modeOf(id).c,text:modeOf(id).label,onclick:()=>{const st=Math.max(ref,t-60*60000);const en=addLog(id,st,t,cur&&['work','meeting','learn','read','deep'].includes(id)?{bucket:cur.bucket,itemId:cur.itemId}:{});toast('Logged the last hour as '+modeOf(id).label);render();if(id==='rest')maybeAsk(en)}})),el('button',{class:'ghost sm',text:'Not now',onclick:()=>{S.nudgeSkip=nowMs();persist();render()}}))));
   }
   // modes
   const mc=el('div',{class:'card'});
@@ -1000,11 +1118,13 @@ function vToday(m){
     if(a.mode==='low'){const lights=S.items.filter(i=>i.type==='flex'&&i.weight==='light').slice(0,4);mc.append(el('p',{class:'hint',style:'margin-top:8px',text:'Gentle options: '+(lights.length?lights.map(i=>i.title).join(', '):'a walk, a podcast, a stretch')+'. Low energy is part of the rhythm, not a failure.'}))}
     const links=[...pl.entries.filter(e=>!e.unplaced&&e.kind!=='due').map(e=>({bucket:e.bucket,itemId:e.itemId,label:e.title})),...S.buckets.map(b=>({bucket:b.id,itemId:null,label:b.name}))].filter((x,i,arr)=>arr.findIndex(y=>y.label===x.label)===i);
     mc.append(el('div',{class:'lbl',text:'Link this time to'}),el('div',{class:'row'},links.slice(0,10).map(l=>el('button',{class:'chip'+(a.itemId===l.itemId&&a.bucket===l.bucket&&(l.itemId||a.itemId==null)?' on':''),onclick:()=>{S.active.bucket=l.bucket;S.active.itemId=l.itemId;persist();render()}},el('i',{style:'background:'+bcolor(l.bucket)}),l.label))));
-    mc.append(el('div',{class:'row',style:'margin-top:12px'},el('button',{class:'btn',text:'Stop and log it',onclick:()=>{stopMode();render()}})));
+    mc.append(el('div',{class:'row',style:'margin-top:12px'},el('button',{class:'btn',text:'Stop and log it',onclick:endMode})));
     mc.append(el('div',{class:'lbl',style:'margin-top:14px',text:'Or switch to'}));
   }else mc.append(el('h3',{text:'Set your mode'}),el('p',{class:'hint',style:'margin-bottom:10px',text:'Tap what you are doing now. Quarters times it and adds it to your day.'}));
-  mc.append(el('div',{class:'mgrid'},MODES.filter(x=>!a||x.id!==a.mode).map(x=>el('button',{class:'mbtn',style:'background:'+x.c,'aria-label':'Start '+x.label,onclick:()=>x.id==='deep'?openLaunch():x.id==='low'?openHibernate():begin(x.id)},x.label,el('small',{text:x.id==='deep'?'protected':x.id==='low'?'recovery':''})))));
+  mc.append(el('div',{class:'mgrid'},MODES.filter(x=>!x.hidden&&(!a||x.id!==a.mode)).map(x=>el('button',{class:'mbtn',style:'background:'+x.c,'aria-label':'Start '+x.label,onclick:()=>x.id==='deep'?openLaunch():x.id==='low'?openHibernate():begin(x.id)},x.label,el('small',{text:x.id==='deep'?'protected':x.id==='low'?'recovery':''})))));
+  mc.append(el('button',{class:'ghost',style:'width:100%;margin-top:10px',text:'＋ Log something else I did',onclick:openQuick}));
   m.append(mc);
+  const cpc=capsCard();if(cpc)m.append(cpc);
   // quotas
   const qs=pl.entries.filter(e=>e.kind==='quota'&&!e.unplaced);
   if(qs.length){const qc=el('div',{class:'card'},el('h3',{text:'Daily targets'}));
@@ -1029,6 +1149,7 @@ function vToday(m){
   const un=pl.entries.filter(e=>e.unplaced);
   if(un.length)cl.append(el('p',{class:'hint',style:'margin-top:8px',text:'Did not fit today: '+un.map(e=>e.title).join(', ')+'.'}));
   m.append(cl);
+  const drc=dayReportCard();if(drc)m.append(drc);
 }
 function paceFor(it){
   if(!it)return 0;let tm=0,n=0,k=0;
@@ -1243,6 +1364,7 @@ function vSetup(m){
   if(!S.items.length)ic.append(el('p',{class:'hint',style:'margin-top:8px',text:'Nothing yet. Use the boxes above, or add items yourself.'}));
   Object.keys(TYPELAB).forEach(k=>{const l=S.items.filter(i=>i.type===k);if(!l.length)return;ic.append(el('div',{class:'lbl',style:'margin-top:12px',text:TYPELAB[k]+' ('+l.length+')'}));l.forEach(i=>ic.append(el('div',{class:'crow'},el('i',{class:'dot',style:'background:'+bcolor(i.bucket)}),el('div',{class:'ct'},el('b',{text:i.title}),el('small',{text:itemSummary(i)})),el('button',{class:'ghost sm',text:'Edit',onclick:()=>openItem(i.id)}))))});
   m.append(ic);
+  m.append(behaviorSetupCard());
   // display + data
   const dc=el('div',{class:'card'},el('h3',{text:'Display and data'}));
   dc.append(el('div',{class:'row',style:'margin-bottom:10px'},el('button',{class:'chip'+(S.profile.h24?' on':''),text:'24-hour clock',onclick:()=>{S.profile.h24=!S.profile.h24;persist();render()}})));
@@ -1299,6 +1421,7 @@ function vStats(m){
   if(nav.stab==='habits')return vHabits(m);
   if(nav.stab==='focus')return vLab(m);
   if(nav.stab==='review')return vReviewTab(m);
+  if(nav.stab==='behavior')return vBehavior(m);
   const mon=addDays(mondayOf(nowD()),nav.sweek*7),st=weekStats(mon);
   const range=mon.getDate()+' '+MONTHS[mon.getMonth()].slice(0,3)+' to '+addDays(mon,6).getDate()+' '+MONTHS[addDays(mon,6).getMonth()].slice(0,3);
   m.append(header('Stats',range,el('div',{class:'row'},el('button',{class:'ghost sm','aria-label':'Previous week',text:'‹',onclick:()=>{nav.sweek--;render()}}),nav.sweek?el('button',{class:'ghost sm',text:'This week',onclick:()=>{nav.sweek=0;render()}}):null,el('button',{class:'ghost sm','aria-label':'Next week',text:'›',onclick:()=>{nav.sweek++;render()}}))));
@@ -1470,7 +1593,7 @@ function windowCard(){
 function hibernateBanner(t){
   const a=S.active;if(!a||a.mode!=='low'||!a.planned||t-a.start<a.planned*60000)return null;
   const w=whereIs(t);
-  return el('div',{class:'nudge'},el('b',{text:'Your hibernate time is up.'}),el('p',{class:'hint',style:'margin:4px 0 10px',text:'How is your energy now?'}),el('div',{class:'row'},el('button',{class:'btn sm',text:'Back to normal',onclick:()=>{stopMode();render()}}),el('button',{class:'ghost sm',text:'30 more minutes',onclick:()=>{S.active.planned+=30;delete S.active.cued.end;persist();render()}}),el('button',{class:'ghost sm',text:'Minimum day',onclick:()=>{S.minDay[dkey(w.date)]=true;stopMode();render()}})));
+  return el('div',{class:'nudge'},el('b',{text:'Your hibernate time is up.'}),el('p',{class:'hint',style:'margin:4px 0 10px',text:'How is your energy now?'}),el('div',{class:'row'},el('button',{class:'btn sm',text:'Back to normal',onclick:endMode}),el('button',{class:'ghost sm',text:'30 more minutes',onclick:()=>{S.active.planned+=30;delete S.active.cued.end;persist();render()}}),el('button',{class:'ghost sm',text:'Minimum day',onclick:()=>{S.minDay[dkey(w.date)]=true;stopMode();render()}})));
 }
 
 /* ---------- Stats: habit curves ---------- */
@@ -1564,7 +1687,7 @@ function coach(m){
   c.append(el('label',{class:'lbl',text:'Your launch ritual, one step per line'}),ta,el('div',{class:'row',style:'margin-top:6px'},el('button',{class:'chip'+(S.focus.chime?' on':''),text:'Sound and vibration cues',onclick:()=>{S.focus.chime=!S.focus.chime;persist();render()}})));
   m.append(c);
 }
-function statsSeg(){return el('div',{class:'seg'},[['week','Week'],['habits','Habits'],['focus','Focus'],['review','Review']].map(([k,l])=>el('button',{class:(nav.stab||'week')===k?'on':'',text:l,onclick:()=>{nav.stab=k;render()}})))}
+function statsSeg(){return el('div',{class:'seg'},[['week','Week'],['habits','Habits'],['focus','Focus'],['behavior','Behavior'],['review','Review']].map(([k,l])=>el('button',{class:(nav.stab||'week')===k?'on':'',text:l,onclick:()=>{nav.stab=k;render()}})))}
 /* ====================== Quarters: the chain screens ====================== */
 const LINKCOL=['#7b6cf0','#e0a21b','#1fa67a','#d34f9a','#2aa5c9','#ff7a45','#5b6cff','#d9534f'];
 const linkColor=id=>{const i=S.identity.links.findIndex(l=>l.id===id);return LINKCOL[(i<0?0:i)%LINKCOL.length]};
@@ -1958,6 +2081,168 @@ function dataExtras(dc){
       el('p',{class:'hint',style:'margin-top:6px;line-height:1.45',text:'Phones pause web apps shortly after you leave them, so alerts are best effort. For a guaranteed alert, use “Add an alarm to my calendar” inside a hyperfocus session.'}));
   }
   dc.append(el('p',{class:'hint',style:'margin-top:10px;line-height:1.45',text:STANDALONE?'Your data is saved on this device and can sync to your Google Drive.':'This prototype saves in this browser only. Download a backup now and then.'}));
+}
+/* ====================== Quarters: behavior capture and analytics screens ====================== */
+const KIND_LAB={drift:'Drift',restore:'Restore',neutral:'Neutral'};
+function actChips(sel,single){
+  const row=el('div',{class:'row'});
+  const paint=()=>fill(row,['drift','restore','neutral'].flatMap(k=>S.acts.filter(a=>a.kind===k).map(a=>el('button',{class:'chip'+(sel.has(a.id)?' on':''),onclick:()=>{if(sel.has(a.id))sel.delete(a.id);else{if(single)sel.clear();sel.add(a.id)}paint()}},el('i',{style:'background:'+KIND_C[a.kind]}),a.name))));
+  paint();return row;
+}
+function addActInline(sh,sel,repaint){
+  const inp=el('input',{class:'field',placeholder:'Something else? Type it','aria-label':'Add your own',style:'margin:10px 0 6px'});
+  const kinds=['drift','restore','neutral'];let kind='neutral';
+  const kr=el('div',{class:'seg'});const pk=()=>fill(kr,kinds.map(k=>el('button',{class:kind===k?'on':'',text:KIND_LAB[k],onclick:()=>{kind=k;pk()}})));pk();
+  sh.append(inp,kr,el('button',{class:'ghost sm',text:'Add it',onclick:()=>{const v=inp.value.trim();if(!v)return;const a={id:'c'+uid(),name:v,kind};S.acts.push(a);sel.add(a.id);persist();inp.value='';repaint()}}));
+}
+function capToast(){const hit=capStatus().filter(x=>x.used>=x.cap);if(hit.length)toast('Limit reached for '+hit[0].a.name+' today ('+dur(hit[0].used)+' of '+dur(hit[0].cap)+')')}
+/* “what were you doing?”: asked when Rest or Hibernate ends */
+function maybeAsk(en){if(en&&S.behav.ask&&(en.mode==='rest'||en.mode==='low')&&!(en.acts||[]).length&&!en.itemId&&logMin(en)>=5)setTimeout(()=>openWhat(en),80)}
+function endMode(){const en=stopMode();render();maybeAsk(en)}
+function openWhat(entry){
+  const sel=new Set(entry.acts||[]);
+  sheet((sh,close)=>{
+    const body=el('div');
+    const paint=()=>fill(body,actChips(sel),el('div',{id:'addwrap'}));
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.15rem',text:'What were you doing?'}),el('button',{class:'ghost sm',text:'Skip',onclick:close})));
+    sh.append(el('p',{class:'hint',style:'margin-bottom:10px;line-height:1.5',text:dur(logMin(entry))+' of '+modeOf(entry.mode).label.toLowerCase()+'. Tap what fits. This is how Quarters learns what you reach for when your energy dips. No judgement, just honest data.'}),body);
+    paint();addActInline(sh,sel,()=>{paint()});
+    sh.append(el('button',{class:'btn',style:'width:100%;margin-top:12px',text:'Save',onclick:()=>{entry.acts=[...sel];persist();close();capToast()}}));
+  },{full:true});
+}
+/* quick-log: anytime */
+function openQuick(){
+  const sel=new Set(),o={min:15},during=S.active?S.active.mode:null;
+  sheet((sh,close)=>{
+    const body=el('div'),mins=el('div',{class:'seg'});
+    const paint=()=>{fill(body,actChips(sel));fill(mins,[5,10,15,30,60].map(m=>el('button',{class:o.min===m?'on':'',text:m+'m',onclick:()=>{o.min=m;paint()}})))};
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.15rem',text:'Log something I did'}),el('button',{class:'ghost sm',text:'Cancel',onclick:close})));
+    sh.append(el('p',{class:'hint',style:'margin-bottom:10px;line-height:1.5',text:'For anything outside your plan, good or not. It ended just now.'+(during?' It will be noted as happening during '+modeOf(during).label+'.':'')}),body,el('label',{class:'lbl',text:'For how long?'}),mins);
+    paint();addActInline(sh,sel,paint);
+    sh.append(el('button',{class:'btn',style:'width:100%;margin-top:12px',text:'Log it',onclick:()=>{
+      if(!sel.size){toast('Pick what it was first.');return}
+      const t=nowMs(),ids=[...sel],drift=ids.some(id=>(actById(id)||{}).kind==='drift');
+      addLog(drift?'drift':'rest',t-o.min*60000,t,{acts:ids,quick:true,during:during||null});
+      if(during==='deep'&&S.active){S.active.interrupts=S.active.interrupts||[];ids.forEach(id=>S.active.interrupts.push({at:t,tag:(actById(id)||{}).name||'Other'}));persist()}
+      close();toast('Logged');capToast();}}));
+  },{full:true});
+}
+function openActsEditor(){
+  sheet((sh,close)=>{
+    const body=el('div');
+    const paint=()=>{
+      fill(body,S.acts.map(a=>{
+        const row=el('div',{class:'card',style:'padding:12px'});
+        row.append(el('div',{class:'row spread'},el('b',{style:'font-size:.95rem',text:a.name}),el('div',{class:'row',style:'gap:4px'},['drift','restore','neutral'].map(k=>el('button',{class:'chip'+(a.kind===k?' on':''),style:'padding:3px 9px',text:KIND_LAB[k],onclick:()=>{a.kind=k;if(k!=='drift')delete S.behav.caps[a.id];persist();paint()}})))));
+        if(a.kind==='drift'){const c=el('input',{class:'field',type:'number',min:'0',step:'5',inputmode:'numeric','aria-label':'Daily limit for '+a.name,placeholder:'Daily limit in minutes (optional)',style:'margin:8px 0 0'});c.value=S.behav.caps[a.id]||'';c.addEventListener('input',()=>{const v=+c.value;if(v>0)S.behav.caps[a.id]=v;else delete S.behav.caps[a.id];persist()});row.append(c)}
+        if(String(a.id).startsWith('c')){const d=el('button',{class:'ghost sm danger',style:'margin-top:8px',text:'Remove'});armDelete(d,'remove',()=>{S.acts=S.acts.filter(x=>x.id!==a.id);delete S.behav.caps[a.id];persist();paint()});row.append(d)}
+        return row}));
+    };
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.15rem',text:'Your activities'}),el('button',{class:'ghost sm',text:'Done',onclick:close})));
+    sh.append(el('p',{class:'hint',style:'margin-bottom:10px;line-height:1.5',text:'Mark each as Drift (time that slips away), Restore (genuinely recharges you) or Neutral. Drift activities can have a daily limit. Quarters nudges you gently when you near it.'}),body);
+    paint();
+    const sel=new Set();addActInline(sh,sel,paint);
+  },{full:true});
+}
+function openUndescribed(){
+  const list=undescribed().slice(0,8);
+  sheet((sh,close)=>{
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.15rem',text:'Describe past sessions'}),el('button',{class:'ghost sm',text:'Done',onclick:()=>{close()}})));
+    if(!list.length){sh.append(el('p',{class:'hint',text:'Everything is described.'}));return}
+    list.forEach(l=>{const d=new Date(l.start);sh.append(el('div',{class:'card'},el('b',{style:'font-size:.92rem',text:modeOf(l.mode).label+', '+dur(logMin(l))+' · '+DAYS[d.getDay()]+' '+f12(d.getHours()*60+d.getMinutes())}),el('div',{style:'margin-top:8px'},(()=>{const sel=new Set(l.acts||[]);const w=el('div');const paint=()=>fill(w,actChips(sel,true));paint();const orig=w;orig.addEventListener('click',()=>{l.acts=[...sel];persist()});return w})())))});
+  },{full:true});
+}
+function capsCard(){
+  const hit=capStatus();if(!hit.length)return null;
+  return el('div',{class:'nudge'},el('b',{text:'Your limits today'}),hit.map(x=>el('p',{style:'margin:6px 0 0;font-size:.9rem;line-height:1.45',text:x.a.name+': '+dur(x.used)+' of '+dur(x.cap)+(x.used>=x.cap?'. You are at your limit. A short walk or a glass of water would reset you.':'. Nearly there.')})));
+}
+function dayReportCard(){
+  const B=behaviorStats('today');if(!B.total)return null;
+  const top=B.acts.filter(a=>a.cat!=='travel')[0],dr=B.tot.drift||0,deep=deepSessions().filter(l=>l.start>=B.R.from&&l.start<B.R.to).sort((a,b)=>logMin(b)-logMin(a))[0];
+  return el('div',{class:'card'},el('div',{class:'row spread'},el('h3',{style:'margin:0',text:'Your day so far'}),el('button',{class:'ghost sm',text:'Behavior',onclick:()=>{nav.stab='behavior';go('stats')}})),
+    el('div',{class:'tiles',style:'margin-top:10px'},el('div',{class:'tile'},el('div',{class:'big',text:dur(B.total)}),el('small',{text:'tracked today'})),el('div',{class:'tile'},el('div',{class:'big',style:'font-size:1.05rem;line-height:1.25',text:top?top.label:'-'}),el('small',{text:top?'most time, '+dur(top.min):'most time'}))),
+    el('p',{class:'hint',style:'line-height:1.5',text:(dr?dur(dr)+' of drift today.':'No drift logged today.')+(deep?' Longest deep focus: '+dur(logMin(deep))+'.':'')}));
+}
+/* ---------- Stats: Behavior ---------- */
+function barItem(label,color,v,max,right){return el('div',{class:'brow'},el('div',{class:'nm'},el('i',{class:'dot',style:'background:'+color}),el('span',{style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',text:label})),el('div',{class:'tr'},el('i',{style:'width:'+Math.max(3,Math.round(v/max*100))+'%;background:'+color})),el('div',{class:'v',text:right}))}
+function heatmap(B){
+  const C={work:'#5b6cff',growth:'#1fa67a',rest:'#8a63d2',drift:'#e0603a'},L={work:'Work',growth:'Growth',rest:'Rest',drift:'Drift'};
+  const box=el('div',{class:'card'},el('h3',{text:'When things happen'}));
+  HEAT.forEach(k=>{const row=B.heat[k],mx=Math.max(1,...row);
+    box.append(el('div',{style:'display:flex;align-items:center;gap:6px;margin:4px 0'},el('span',{style:'width:48px;font-size:.74rem;color:var(--muted)',text:L[k]}),el('div',{style:'flex:1;display:grid;grid-template-columns:repeat(12,1fr);gap:3px','aria-label':L[k]+' by time of day'},row.map((v,i)=>el('div',{title:binLabel(i)+': '+dur(v),style:`height:22px;border-radius:5px;background:${C[k]};opacity:${v?.18+.82*v/mx:.07}`})))));});
+  box.append(el('div',{style:'display:flex;margin:2px 0 0 54px'},['12a','6a','12p','6p'].map(t=>el('span',{class:'hint',style:'flex:1;font-size:.66rem',text:t}))));
+  const pk=topBin(B.heat.drift);
+  box.append(el('p',{class:'hint',style:'margin-top:8px;line-height:1.45',text:'Each square is two hours, from midnight. Darker means more time.'+(pk?' Your drift is heaviest between '+binBetween(pk.b)+'.':'')}));
+  return box;
+}
+function vBehavior(m){
+  m.append(header('Stats','Behavior'),statsSeg());
+  const per=nav.bper||'7';
+  m.append(el('div',{class:'seg'},[['today','Today'],['7','7 days'],['28','28 days']].map(([k,l])=>el('button',{class:per===k?'on':'',text:l,onclick:()=>{nav.bper=k;render()}}))));
+  const B=behaviorStats(per),days=B.R.days;
+  if(!B.total){m.append(el('div',{class:'empty',text:'Nothing logged in this period yet. Tap modes as you go, and use “Log something I did” for anything off-plan. Behavior patterns appear after a few days.'}),S.items.length?el('div',{style:'text-align:center'},el('button',{class:'ghost',text:'Add four weeks of sample history',onclick:()=>{makeSampleHistory();render()}})):null);return}
+  const dr=B.tot.drift||0,work=B.tot.work||0;
+  m.append(el('div',{class:'tiles'},
+    el('div',{class:'tile'},el('div',{class:'big',text:dur(B.total/days)}),el('small',{text:'tracked per day'})),
+    el('div',{class:'tile'},el('div',{class:'big',text:Math.round(dr/B.total*100)+'%'}),el('small',{text:'of it was drift'})),
+    el('div',{class:'tile'},el('div',{class:'big',style:'font-size:1.05rem;line-height:1.25',text:B.work[0]?B.work[0].label:'-'}),el('small',{text:'work you do most'})),
+    el('div',{class:'tile'},el('div',{class:'big',style:'font-size:1.05rem;line-height:1.25',text:B.drift[0]?B.drift[0].label:'None logged'}),el('small',{text:'what you indulge in most'}))));
+  const ins=behaviorInsights(per);
+  if(ins.length)m.append(el('div',{class:'card'},el('h3',{text:'What your behavior says'}),ins.map(x=>el('p',{style:'margin:0 0 8px;line-height:1.5;font-size:.92rem',text:x}))));
+  const ua=undescribed().length;
+  if(ua>=3)m.append(el('div',{class:'nudge'},el('b',{text:ua+' rest sessions have no description.'}),el('p',{class:'hint',style:'margin:4px 0 8px',text:'Describing them makes these patterns sharper.'}),el('button',{class:'btn sm',text:'Describe them',onclick:openUndescribed})));
+  const ac=B.acts.slice(0,8),mx=ac[0]?ac[0].min:1;
+  m.append(el('div',{class:'card'},el('h3',{text:'Where your time goes'}),ac.map(a=>barItem(a.label,a.kind==='drift'||a.cat==='drift'?KIND_C.drift:a.kind==='restore'?KIND_C.restore:a.cat==='work'?'#5b6cff':a.cat==='growth'?'#1fa67a':'#8a63d2',a.min,mx,dur(a.min))),el('p',{class:'hint',style:'margin-top:6px',text:'Orange is drift, green is restoring or growth, blue is work.'})));
+  const wk=B.work.slice(0,5);
+  if(wk.length)m.append(el('div',{class:'card'},el('h3',{text:'Work you do most'}),wk.map(w=>barItem(w.label,'#5b6cff',w.min,wk[0].min,dur(w.min)))));
+  const hb=B.habit.slice(0,5);
+  if(hb.length)m.append(el('div',{class:'card'},el('h3',{text:'Habits you do most'}),hb.map(h=>barItem(h.label,'#1fa67a',h.n,hb[0].n,h.n+' x')),el('p',{class:'hint',style:'margin-top:6px',text:'Counted by sessions you logged.'})));
+  const dv=B.drift.slice(0,5);
+  m.append(el('div',{class:'card'},el('h3',{text:'What you indulge in most'}),dv.length?[dv.map(d=>{const dd=Object.keys(d.during);return el('div',null,barItem(d.label,KIND_C.drift,d.min,dv[0].min,dur(d.min)),el('div',{class:'hint',style:'margin:-2px 0 6px 0;font-size:.74rem',text:d.n+' time'+(d.n===1?'':'s')+', about '+dur(d.min/days)+' a day'+(dd.length?'. Often during '+dd.map(x=>modeOf(x).label).join(', '):'')}))}),el('p',{class:'hint',style:'line-height:1.45',text:'Drift is not a moral failing. It is information about where your energy and attention go.'})]:el('p',{class:'hint',style:'line-height:1.5',text:'No drift logged yet. Use “Log something I did” when you notice yourself drifting, and this fills in.'})));
+  m.append(heatmap(B));
+  /* hyperfocus profile */
+  const Y=hyperProfile(per),yc=el('div',{class:'card'},el('h3',{text:'When you hyperfocus'}));
+  if(!Y.n)yc.append(el('p',{class:'hint',text:'No hyperfocus sessions in this period.'}));
+  else{
+    const pk=topBin(Y.bins);
+    yc.append(el('p',{style:'margin:0 0 8px;line-height:1.5;font-size:.92rem',text:Y.n+' session'+(Y.n===1?'':'s')+', '+dur(Y.min)+' in all, averaging '+dur(Y.avg)+(pk?'. You usually start between '+binBetween(pk.b)+'.':'.')}));
+    yc.append(el('div',{class:'lbl',text:'What you do in it'}),...Y.items.slice(0,4).map(i=>barItem(i.label,modeOf('deep').c,i.min,Y.items[0].min,dur(i.min))));
+    yc.append(el('p',{class:'hint',style:'margin-top:8px;line-height:1.5',text:(Y.worth!=null?Math.round(Y.worth*100)+'% rated worth it. ':'')+'About '+Y.avgInt.toFixed(1)+' interruption'+(Y.avgInt===1?'':'s')+' per session'+(Y.tags[0]?', mostly '+Y.tags[0][0]+'.':'.')+(Y.during[0]?' You logged '+Y.during.map(d=>d[0]).slice(0,2).join(' and ')+' during sessions.':'')}));
+  }
+  m.append(yc);
+  /* hibernate profile */
+  const H=hibProfile(per),hc=el('div',{class:'card'},el('h3',{text:'When you hibernate'}));
+  if(!H.n)hc.append(el('p',{class:'hint',text:'No hibernate sessions in this period.'}));
+  else{
+    const pk=topBin(H.bins);
+    hc.append(el('p',{style:'margin:0 0 8px;line-height:1.5;font-size:.92rem',text:H.n+' session'+(H.n===1?'':'s')+', '+dur(H.min)+' in all, averaging '+dur(H.avg)+(pk?'. Mostly between '+binBetween(pk.b)+'.':'.')}));
+    if(H.acts.length){hc.append(el('div',{class:'lbl',text:'What you do in it'}),...H.acts.slice(0,5).map(a=>barItem(a.label,KIND_C[a.kind],a.min,H.acts[0].min,a.n+' x')));
+      const dm=H.acts.filter(a=>a.kind==='drift').reduce((s,a)=>s+a.min,0),rm=H.acts.filter(a=>a.kind==='restore').reduce((s,a)=>s+a.min,0);
+      if(dm+rm>0)hc.append(el('p',{class:'hint',style:'margin-top:6px;line-height:1.5',text:'Of the time you described, '+Math.round(rm/(dm+rm)*100)+'% genuinely restored you and '+Math.round(dm/(dm+rm)*100)+'% was drift.'}))}
+    if(H.undesc)hc.append(el('p',{class:'hint',style:'margin-top:6px',text:H.undesc+' session'+(H.undesc===1?' is':'s are')+' not described yet.'}));
+    if(H.n>=3){const bits=[];if(H.afterDeep)bits.push(H.afterDeep+' came within three hours of a long hyperfocus session');if(H.lowSleep)bits.push(H.lowSleep+' followed a night under 5.5 hours of sleep');if(H.heavy)bits.push(H.heavy+' fell on a heavy day');if(bits.length)hc.append(el('div',{class:'lbl',style:'margin-top:8px',text:'What seems to trigger it'}),el('p',{style:'margin:0;font-size:.9rem;line-height:1.5',text:'Of '+H.n+': '+bits.join('; ')+'.'}))}
+  }
+  m.append(hc);
+  /* manage */
+  const mc=el('div',{class:'card'},el('h3',{text:'Manage it'}));
+  const top=B.drift[0],avg=top?top.min/days:0,hasCap=top&&S.acts.find(a=>a.name===top.label&&S.behav.caps[a.id]);
+  const rest=B.acts.filter(a=>a.kind==='restore')[0];
+  let any=false;
+  if(top&&avg>=15&&!hasCap){any=true;const act=S.acts.find(a=>a.name===top.label),cap=Math.max(15,Math.round(avg*.6/5)*5);
+    mc.append(el('div',{class:'prop'},el('div',{class:'pt'},top.label+' averages '+dur(avg)+' a day. A gentle daily limit of '+dur(cap)+' would nudge you before it grows.',el('div',{style:'margin-top:8px'},act?el('button',{class:'btn sm',text:'Set a '+dur(cap)+' limit',onclick:()=>{S.behav.caps[act.id]=cap;persist();toast('Limit set');render()}}):null))))}
+  if(top&&rest){any=true;mc.append(el('div',{class:'prop'},el('div',{class:'pt',text:'When you reach for '+top.label+', try '+rest.label+' instead. You already do it, and it actually restores you.'})))}
+  const pk=topBin(B.heat.drift);
+  if(pk&&pk.share>=.28){any=true;mc.append(el('div',{class:'prop'},el('div',{class:'pt',text:'Plan something deliberate for '+binLabel(pk.b)+', such as a walk or a call. A planned break beats an accidental one.'})))}
+  if(!any)mc.append(el('p',{class:'hint',style:'line-height:1.5',text:'Nothing to manage right now. Your drift is low or already limited.'}));
+  mc.append(el('div',{class:'row',style:'margin-top:10px'},el('button',{class:'ghost sm',text:'Edit my activities and limits',onclick:openActsEditor}),el('button',{class:'ghost sm',text:'Log something I did',onclick:openQuick})));
+  m.append(mc);
+}
+function behaviorSetupCard(){
+  const box=el('div',{class:'card'},el('h3',{text:'Behavior tracking'}));
+  box.append(el('p',{class:'hint',style:'margin-bottom:10px;line-height:1.5',text:'To see what you do most, and what you indulge in, Quarters needs to know about time outside your plan.'}),
+    el('div',{class:'row'},el('button',{class:'chip'+(S.behav.ask?' on':''),text:'Ask what I was doing when Rest or Hibernate ends',onclick:()=>{S.behav.ask=!S.behav.ask;persist();render()}})),
+    el('div',{class:'row',style:'margin-top:10px'},el('button',{class:'ghost sm',text:'Edit activities and limits',onclick:openActsEditor}),el('button',{class:'ghost sm',text:'Log something I did',onclick:openQuick})));
+  return box;
 }
 /* ====================== Quarters: Google Drive sync (installed version) ====================== */
 const SYNC={scope:'https://www.googleapis.com/auth/drive.appdata',token:null,exp:0,busy:false,err:'',note:'',timer:null,needsAuth:false};

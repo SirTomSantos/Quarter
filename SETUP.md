@@ -55,3 +55,11 @@ Setup → **Download a backup** saves everything to a file. **Restore a backup**
 - **Sign-in popup is blocked**: allow pop-ups for your site, then press Connect again.
 - **"Reconnect"**: your Google session expired after an hour away. Press it once.
 - **The app looks old after an update**: close it completely and open it again. It updates in the background.
+
+## Behavior tracking (what you do, and what you reach for)
+
+- **Log something I did** (Today, under the mode buttons) records anything outside your plan in two taps. Mark each activity as *Drift*, *Restore* or *Neutral* under **Setup → Behavior tracking → Edit activities and limits**, and add your own.
+- When **Rest** or **Hibernate** ends, Quarters asks what you were doing. You can always skip, or turn the question off.
+- **Stats → Behavior** ranks the work you do most, the habits you do most, and what you indulge in most. It shows when things happen, profiles your hyperfocus and your hibernate sessions, and looks for triggers such as short sleep or long deep-focus sessions.
+- Drift activities can have a gentle daily limit.
+- This is self-reported. A web app cannot read your phone's screen time, so anything you do not log stays invisible.
