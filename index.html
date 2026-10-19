@@ -215,6 +215,27 @@ function freqOf(s){
   if(dt.length){const d=[...new Set(dt.flatMap(t=>t.dows))];return{perWeek:d.length,days:d}}
   return null;
 }
+const NOTREADY=/\b(not ready|not yet|later|someday|some day|maybe|eventually|when i('?m| am) ready|on hold|postpone)\b/i;
+const GROUPS=[
+ {kw:/\b(apply|applic|cv\b|resume|proposal|outreach|upwork|job|network|interview)/i,bn:/work|job|career|business|freelanc|client/i,not:null},
+ {kw:/\b(study|studies|learn|practic|cours|analy|track|demo|tutorial|skill|portfolio|project|repositor|certif)/i,bn:/learn|study|skill|school|academ|train/i,not:null},
+ {kw:/\b(read|research|podcast|sermon|pray|walk|meditat|writ|journal|youtube|reflect|philosoph|book|bible)/i,bn:/develop|growth|self|spirit|mind|personal/i,not:/work|job|career/i}];
+function guessBucket(sent,buckets){
+  for(const g of GROUPS){if(g.kw.test(sent)){const b=buckets.find(b=>g.bn.test(b.name)&&!(g.not&&g.not.test(b.name)));if(b)return b}}
+  return null;
+}
+function habitTitle(sent){
+  let t=sent.replace(/\([^)]*\)/g,' ').replace(/[.!?]+$/,'');
+  t=t.replace(/\b(every ?day|daily|each day|everyday|weekdays?|weekends?|\d+\s*(x|times?)\s*(a|per|each|every)\s*week|(once|twice)\s*(a|per|each)\s*week|\d+\s*days?\s*(a|per|each|every)\s*week|weekly)\b/gi,' ');
+  t=t.replace(/\b(on|every)\s+(sun|mon|tue|wed|thu|fri|sat)\w*(\s*(,|and|&)\s*(sun|mon|tue|wed|thu|fri|sat)\w*)*/gi,' ');
+  t=t.replace(/\b(for\s+)?(\d+(?:\.\d+)?\s*(hours?|hrs?|h|minutes?|mins?)|an hour|half an hour)\b/gi,' ');
+  t=t.replace(/\b(in the|at)\s+(morning|afternoon|evening|night)s?\b|\b(mornings?|evenings?|nights?|afternoons?)\b/gi,' ');
+  t=t.replace(/^\s*(i\s+(want to|would like to|'d like to|should|will|plan to|need to)\s+|i\s+|my\s+|to\s+)/i,'').replace(/\s+/g,' ').trim();
+  for(let i=0;i<3;i++)t=t.replace(/\s*\b(on|for|at|in|every|each|and|a|per)\s*$/i,'').trim();
+  const map={read:'Reading',study:'Study',research:'Research',practice:'Practice',write:'Writing',pray:'Prayer',walk:'Walking',exercise:'Exercise',journal:'Journaling',meditate:'Meditation'};
+  const ws=t.split(' ');if(ws.length===1&&map[ws[0].toLowerCase()])t=map[ws[0].toLowerCase()];
+  return cap(t.split(' ').slice(0,6).join(' '))||'New habit';
+}
 function parseText(text,buckets,kind){
   const out={proposals:[],ignored:[]};
   let ctx=null;
@@ -252,7 +273,7 @@ function parseText(text,buckets,kind){
       const upto=sent.match(/up to\s+(\d+(?:\.\d+)?)\s*(hours?|hrs?|h)\b/i),anyh=durations(sent).filter(d=>d.min>=30).pop();
       const est=upto?Math.round(+upto[1]*60):(anyh?anyh.min:Math.min(240,n*5));
       const f=freqOf(sent);
-      made.push({kind:'quota',title:verb+' '+n+' '+noun,bucket:bucket&&bucket.id,days:f?f.days:WEEKDAYS,target:n,unit:noun.split(' ').pop(),estMin:est,notes:[f&&f.days.length?null:'weekdays assumed',upto?'time budget taken from "up to '+upto[1]+' hours"':null].filter(Boolean),from:sent});
+      made.push({kind:'quota',title:verb+' '+n+' '+noun,bucket:(bucket||guessBucket(sent,buckets)||{}).id||null,days:f?f.days:WEEKDAYS,target:n,unit:noun.split(' ').pop(),estMin:est,notes:[f&&f.days.length?null:'weekdays assumed',upto?'time budget taken from "up to '+upto[1]+' hours"':null].filter(Boolean),from:sent});
     }
     // 3. deadline / weekly milestone
     let d;
@@ -275,7 +296,14 @@ function parseText(text,buckets,kind){
         const top=acts[0],tn=[];
         if(!f)tn.push('3 times a week assumed');if(!du)tn.push('45 minutes assumed');
         const pref=/\b(morning|mornings|early)\b/.test(low)?'morning':/\bafternoons?\b/.test(low)?'afternoon':/\b(evening|evenings|night|nights)\b/.test(low)?'evening':'';
-        made.push({kind:'flex',title:top.a.name,bucket:top.b.id,days:f?f.days:[],perWeek:f?f.perWeek:3,minutes:du?du.min:45,weight:LIGHTRE.test(top.a.name)?'light':'deep',pref,notes:tn,from:sent});
+        if(NOTREADY.test(sent))tn.push('paused, because you said you are not ready');
+        made.push({kind:'flex',title:top.a.name,bucket:top.b.id,days:f?f.days:[],perWeek:f?f.perWeek:3,minutes:du?du.min:45,weight:LIGHTRE.test(top.a.name)?'light':'deep',pref,notes:tn,paused:NOTREADY.test(sent),from:sent});
+      }else if(kind==='habits'&&(f||du)){
+        const gb=bucket||guessBucket(sent,buckets),title=habitTitle(sent),tn=['made from your words'];
+        if(!gb)tn.push('which bucket?');if(!f)tn.push('3 times a week assumed');if(!du)tn.push('45 minutes assumed');
+        if(NOTREADY.test(sent))tn.push('paused, because you said you are not ready');
+        const pref=/\b(morning|mornings|early)\b/.test(low)?'morning':/\bafternoons?\b/.test(low)?'afternoon':/\b(evening|evenings|night|nights)\b/.test(low)?'evening':'';
+        made.push({kind:'flex',title,bucket:gb?gb.id:null,days:f?f.days:[],perWeek:f?f.perWeek:3,minutes:du?du.min:45,weight:LIGHTRE.test(title+' '+sent)?'light':'deep',pref,notes:tn,paused:NOTREADY.test(sent),from:sent});
       }
     }
     if(made.length)made.forEach(m=>out.proposals.push(m));else out.ignored.push(sent);
@@ -908,7 +936,7 @@ function acceptProposals(props,goals){
       S.items.push({id:uid(),type:'fixed',title:p.title,bucket:p.bucket||null,days:p.days.length?p.days:[1],start:st,end:en});n++}
     else if(p.kind==='quota'){S.items.push({id:uid(),type:'quota',title:p.title,bucket:p.bucket||null,days:p.days,target:p.target,unit:p.unit,estMin:p.estMin||120});n++}
     else if(p.kind==='deadline'){S.items.push({id:uid(),type:'deadline',title:p.title,bucket:p.bucket||null,due:p.due,estMin:p.estMin||240});n++}
-    else if(p.kind==='flex'){S.items.push({id:uid(),type:'flex',title:p.title,bucket:p.bucket||null,days:p.days||[],perWeek:p.perWeek||3,minutes:p.minutes||45,weight:p.weight||'deep',pref:p.pref||''});n++}
+    else if(p.kind==='flex'){S.items.push(Object.assign({id:uid(),type:'flex',title:p.title,bucket:p.bucket||null,days:p.days||[],perWeek:p.perWeek||3,minutes:p.minutes||45,weight:p.weight||'deep',pref:p.pref||''},p.paused?{paused:true}:{}));n++}
   });
   (goals||[]).forEach(g=>{S.goals.push({id:uid(),title:g.title,bucket:g.bucket||null,hoursPerWeek:g.hoursPerWeek||0,due:g.due||'',items:[],milestones:g.milestones.map(t=>({id:uid(),title:t,done:false})),created:nowMs()});n++});
   persist();return n;
