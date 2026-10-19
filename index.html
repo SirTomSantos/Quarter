@@ -123,6 +123,12 @@ textarea.field{min-height:96px;resize:vertical;line-height:1.5}
 .linkrow:first-of-type{margin-top:6px}
 .dots.sm{gap:3px}.dots.sm i{width:9px;height:9px;border-radius:50%}
 
+.breathe{width:150px;height:150px;border-radius:50%;background:var(--accent);opacity:.75;margin:22px auto;animation:breathe 14s ease-in-out infinite}
+@keyframes breathe{0%{transform:scale(.55)}30%{transform:scale(1)}57%{transform:scale(1)}100%{transform:scale(.55)}}
+@media (prefers-reduced-motion:reduce){.breathe{animation:none;transform:scale(.85)}}
+details>summary{list-style:none}details>summary::-webkit-details-marker{display:none}
+details[open]>summary{margin-bottom:8px}
+
 </style>
 </head>
 <body>
@@ -367,6 +373,7 @@ const MODES=[
  {id:'rest',label:'Rest',c:'#d34f9a',d:'Break, meal, downtime'},
  {id:'travel',label:'Travel',c:'#7a8599',d:'On the move'},
  {id:'sleep',label:'Sleep',c:'#4b3fb8',d:'Sleeping'},
+ {id:'detox',label:'Detox',c:'#2f9e8f',d:'Screens off. Books, walking, people.'},
  {id:'drift',label:'Drift',c:'#9aa0b4',d:'Time that slipped away',hidden:true}];
 const PRODUCTIVE=['work','meeting','learn','read','deep'];
 const modeOf=id=>MODES.find(m=>m.id===id)||MODES[0];
@@ -378,9 +385,10 @@ const DEFAULT_ACTS=[
  {id:'nap',name:'Napping',kind:'restore'},{id:'walk',name:'Walking',kind:'restore'},{id:'stretch',name:'Stretching',kind:'restore'},{id:'music',name:'Music or listening',kind:'restore'},{id:'talk',name:'Talking with someone',kind:'restore'},{id:'quiet',name:'Quiet or prayer',kind:'restore'},
  {id:'chores',name:'Chores or errands',kind:'neutral'}];
 const DEFAULT_RITUAL=['Phone out of reach and silent','Notifications off','Water nearby','One clear target written down'];
-function emptyState(){return{v:1,acts:DEFAULT_ACTS.map(a=>Object.assign({},a)),behav:{ask:true,caps:{}},reviews:[],carry:{},replans:{},identity:{now:'',becoming:'',links:[]},ideas:[],north:null,chapters:[],between:null,energy:{},minDay:{},focus:{ritual:DEFAULT_RITUAL.slice(),chime:true},profile:{sleep:{start:'23:30',hours:6},override:{},peak:'afternoon',h24:false},buckets:[],items:[],oneoffs:[],moves:{},done:{},progress:{},log:[],goals:[],notes:{routine:'',habits:'',goal:''},active:null,sample:false,created:nowMs()}}
+function emptyState(){return{v:1,tasks:[],dayType:{},override:{},calm:{on:false},themes:['','',''],detox:{on:false,minutes:60},proc:{},dayPlanned:{},snooze:{},acts:DEFAULT_ACTS.map(a=>Object.assign({},a)),behav:{ask:true,caps:{}},reviews:[],carry:{},replans:{},identity:{now:'',becoming:'',links:[]},ideas:[],north:null,chapters:[],between:null,energy:{},minDay:{},focus:{ritual:DEFAULT_RITUAL.slice(),chime:true},profile:{sleep:{start:'23:30',hours:6},override:{},peak:'afternoon',h24:false},buckets:[],items:[],oneoffs:[],moves:{},done:{},progress:{},log:[],goals:[],notes:{routine:'',habits:'',goal:''},active:null,sample:false,created:nowMs()}}
 function migrate(j){
   j.acts=j.acts||DEFAULT_ACTS.map(a=>Object.assign({},a));j.behav=j.behav||{ask:true,caps:{}};if(!j.behav.caps)j.behav.caps={};
+  j.tasks=j.tasks||[];j.dayType=j.dayType||{};j.override=j.override||{};j.calm=j.calm||{on:false};j.themes=j.themes||['','',''];j.detox=j.detox||{on:false,minutes:60};j.proc=j.proc||{};j.dayPlanned=j.dayPlanned||{};j.snooze=j.snooze||{};
   j.energy=j.energy||{};j.reviews=j.reviews||[];j.carry=j.carry||{};j.replans=j.replans||{};
   j.identity=j.identity||{now:'',becoming:'',links:[]};j.ideas=j.ideas||[];j.chapters=j.chapters||[];
   if(j.north===undefined)j.north=null;if(j.between===undefined)j.between=null;
@@ -397,7 +405,7 @@ function saveLocal(){try{localStorage.setItem(KEY,JSON.stringify(S));return true
 function persist(){S.updated=nowMs();if(!saveLocal())toast('Storage is full.');if(syncHook)syncHook()}
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('on'),2200)}
 const bucketById=id=>S.buckets.find(b=>b.id===id);
-const itemById=id=>S.items.find(i=>i.id===id);
+const itemById=id=>S.items.find(i=>i.id===id)||(()=>{const t=(S.tasks||[]).find(x=>x.id===id);return t?taskItem(t):undefined})();
 const bcolor=id=>{const b=bucketById(id);return b?b.color:'#8a93a5'};
 const bname=id=>{const b=bucketById(id);return b?b.name:'No bucket'};
 
@@ -453,6 +461,7 @@ function planDay(date){
   };
   S.items.filter(i=>i.type==='fixed'&&(i.days||[]).includes(dow)).forEach(i=>addFixed(i.id,'fixed',i.title,i.bucket,i.start,i.end));
   S.oneoffs.filter(o=>o.date===key).forEach(o=>addFixed(o.id,'event',o.title,o.bucket,o.start,o.end,{oneoff:true,etype:o.etype}));
+  if(S.detox&&S.detox.on){const dd=Math.min(180,S.detox.minutes||60);addFixed('detox','detox','Screens off',null,hmm(clk(dm,dm.L-dd)),hmm(clk(dm,dm.L)))}
   const todo=[];
   const wk=WEEKORDER.indexOf(dow),mon=dkey(mondayOf(date));
   S.items.forEach(i=>{
@@ -461,14 +470,16 @@ function planDay(date){
       const dueIdx=WEEKORDER.indexOf(i.due),wdone=!!S.done['W'+mon+'|'+i.id];
       if(wk<dueIdx){const chunk=Math.max(30,Math.ceil((i.estMin||240)/Math.max(1,dueIdx)/5)*5);todo.push({i,kind:'deadline',mins:chunk+((S.carry&&S.carry[key+'|'+i.id])||0),prio:0})}
       else if(wk===dueIdx){if(dueIdx===0)todo.push({i,kind:'deadline',mins:(i.estMin||240)+((S.carry&&S.carry[key+'|'+i.id])||0),prio:0});else{E.push({id:i.id,itemId:i.id,kind:'due',title:i.title,bucket:i.bucket,s:0,e:0,mins:0,key:key+'|'+i.id,done:wdone,week:true});const cc=(S.carry&&S.carry[key+'|'+i.id])||0;if(cc>0&&!wdone)todo.push({i,kind:'deadline',mins:cc,prio:0})}}
-    }else if(i.type==='quota'&&(i.days||[]).includes(dow))todo.push({i,kind:'quota',mins:i.estMin||60,prio:1});
+    }else if(i.type==='quota'&&(i.days||[]).includes(dow)){const ov=S.override&&S.override[key+'|'+i.id],tg=ov!=null?ov:i.target;if(tg>0)todo.push({i,kind:'quota',mins:Math.max(15,Math.round((i.estMin||60)*tg/(i.target||tg))),prio:1,tg})}
     else if(i.type==='flex'&&flexDays(i).includes(dow))todo.push({i,kind:'flex',mins:i.minutes||45,prio:i.weight==='light'?3:2});
   });
+  (S.tasks||[]).filter(t=>t.date===key).forEach(t=>{const it=taskItem(t),mins=t.count?Math.max(15,t.count*(t.minPer||30)):(t.minutes||30);todo.push({i:it,kind:'task',mins,prio:1,tg:t.count||null})});
   if(S.minDay[key]){
     const fl=todo.filter(t=>t.kind==='flex').sort((a,b)=>prRank(a.i)-prRank(b.i)||(a.i.weight==='light'?0:1)-(b.i.weight==='light'?0:1)||a.mins-b.mins),musts=fl.filter(t=>prOf(t.i)==='must').slice(0,3),tinyIds=new Set((musts.length>=2?musts:fl.slice(0,2)).map(t=>t.i.id));
     for(let k=todo.length-1;k>=0;k--){const t=todo[k];
       if(t.kind==='flex'){if(tinyIds.has(t.i.id)){t.mins=Math.min(t.mins,15);t.tiny=true}else todo.splice(k,1)}
-      else if(t.kind==='deadline'&&WEEKORDER.indexOf(t.i.due)-wk>1)todo.splice(k,1)}
+      else if(t.kind==='deadline'&&WEEKORDER.indexOf(t.i.due)-wk>1)todo.splice(k,1)
+      else if(t.kind==='task'&&prOf(t.i)==='nice')todo.splice(k,1)}
   }
   todo.sort((a,b)=>prRank(a.i)-prRank(b.i)||a.prio-b.prio);
   const pin=t=>{const mm=mvOf(t.i.id);return mm&&mm.start?0:1};todo.sort((a,b)=>pin(a)-pin(b));
@@ -479,7 +490,7 @@ function planDay(date){
     else{
       if(i.anchor&&t.kind==='flex'){const fa=E.find(x=>x.fixed&&x.itemId===i.anchor&&!x.inRest);if(fa){const s0=fa.e+5;if(free.some(([a,b])=>a<=s0&&b>=s0+mins))s=s0}}
       if(s==null)s=placeIn(free,dm,mins,i);if(s==null&&mins>60){mins=Math.max(30,Math.round(mins/2/5)*5);s=placeIn(free,dm,mins,i)}if(s!=null)free=subtractFree(free,s,s+mins+5)}
-    E.push({id:i.id,itemId:i.id,kind:t.kind,title:i.title,bucket:i.bucket,s:s==null?0:s,e:s==null?0:s+mins,mins,unplaced:s==null,key:key+'|'+i.id,target:i.target,unit:i.unit,reduced:mins<t.mins});
+    E.push({id:i.id,itemId:i.id,kind:t.kind,title:i.title,bucket:i.bucket,s:s==null?0:s,e:s==null?0:s+mins,mins,unplaced:s==null,key:key+'|'+i.id,target:(t.tg!=null?t.tg:i.target),unit:i.unit,reduced:mins<t.mins});
   });
   E.sort((a,b)=>(a.unplaced?1e9:a.s)-(b.unplaced?1e9:b.s));
   return{key,date,dm,entries:E,free};
@@ -496,7 +507,8 @@ function isDone(e){
   if(e.kind==='due')return !!e.done;
   if(S.done[e.key])return true;
   if(e.kind==='quota'&&e.target&&qCount(k,e.itemId)>=e.target)return true;
-  if((e.kind==='flex'||e.kind==='deadline')&&e.mins&&minutesLogged(k,e.itemId)>=e.mins*.5)return true;
+  if((e.kind==='flex'||e.kind==='deadline'||e.kind==='task')&&e.mins&&minutesLogged(k,e.itemId)>=e.mins*.5)return true;
+  if(e.kind==='detox'){const d0=fromKey(k).getTime();let m=0;S.log.forEach(l=>{if(l.mode==='detox'&&l.start>=d0-6*36e5&&l.start<d0+30*36e5)m+=(l.end-l.start)/60000});return m>=e.mins*.5}
   return false;
 }
 
@@ -510,6 +522,7 @@ function stopMode(silent){
   const a=S.active;if(!a)return null;const t=nowMs();let entry=null;
   if(t-a.start>=60000){
     entry={id:uid(),start:a.start,end:t,mode:a.mode,bucket:a.bucket,itemId:a.itemId,intent:a.intent};
+    if(a.approach){entry.approach=a.approach;entry.stage=a.stage||null}
     if(a.mode==='deep'){entry.planned=a.planned||0;entry.interrupts=(a.interrupts||[]).length;entry.tags=(a.interrupts||[]).map(x=>x.tag);entry.parked=(a.parked||[]).map(x=>x.t);entry.energy=a.energy||null}
     S.log.push(entry);
   }
@@ -522,7 +535,7 @@ function lastEnd(){let m=0;S.log.forEach(l=>{if(l.end>m)m=l.end});return m}
 
 /* ---------- rhythm: recommendations ---------- */
 function loggedMin(date,filter){const a=date.getTime(),b=a+864e5;let m=0;S.log.forEach(l=>{if(l.start>=a&&l.start<b&&filter(l))m+=(l.end-l.start)/60000});return m}
-function commit(date){return planDay(date).entries.filter(e=>!e.unplaced&&(e.fixed||e.kind==='quota'||e.kind==='deadline')).reduce((a,e)=>a+e.mins,0)}
+function commit(date){return planDay(date).entries.filter(e=>!e.unplaced&&e.kind!=='detox'&&(e.fixed||e.kind==='quota'||e.kind==='deadline')).reduce((a,e)=>a+e.mins,0)}
 function weekDeficit(it,mon){
   const days=weekDates(mon);let planned=0,done=0;
   days.forEach(d=>{const pl=planDay(d);pl.entries.filter(e=>e.itemId===it.id).forEach(e=>{planned++;if(isDone(e))done++})});
@@ -743,7 +756,7 @@ function capacity(mon){
     const pl=planDay(d);waking+=pl.dm.L;
     pl.entries.forEach(e=>{
       if(e.kind==='due')return;
-      const it=e.oneoff?null:itemById(e.itemId),p=e.fixed?'must':prOf(it);
+      const it=e.oneoff?null:itemById(e.itemId),p=e.kind==='detox'?'should':e.fixed?'must':prOf(it);
       by[p]+=e.mins;per[e.itemId]=(per[e.itemId]||0)+e.mins;if(e.unplaced)unplaced.push(e.title);
     });
   });
@@ -916,6 +929,72 @@ function capStatus(){
   return S.acts.filter(a=>(S.behav.caps||{})[a.id]>0).map(a=>({a,used:todayActMin(a.id),cap:S.behav.caps[a.id]})).filter(x=>x.used>=x.cap*.8);
 }
 function undescribed(){return S.log.filter(l=>(l.mode==='rest'||l.mode==='low')&&!(l.acts||[]).length&&!l.itemId&&logMin(l)>=5&&!l.sample).sort((a,b)=>b.start-a.start)}
+/* ---------- calm: tasks, day types, essentials, next one thing, stages, processes ---------- */
+const DAYTYPES={home:{label:'Home day',scale:1,hint:'Calls and desk work from home. Targets stay as usual.'},field:{label:'Field day',scale:.5,hint:'Visiting customers. Calls are halved, because visits take the time.'},travel:{label:'Travel day',scale:.3,hint:'Mostly on the move. Keep only what matters.'},light:{label:'Light day',scale:.5,hint:'A gentler day. Essentials only, and the rest moves on.'}};
+const taskItem=t=>({id:t.id,type:'task',title:t.title,bucket:t.bucket||null,priority:t.priority||'should',minutes:t.minutes,unit:t.unit||'',weight:'deep',pref:t.block==null?'':['morning','afternoon','evening'][t.block],links:[],isTask:true});
+function setDayType(key,k){
+  const date=fromKey(key),dow=date.getDay();
+  Object.keys(S.override).forEach(x=>{if(x.indexOf(key+'|')===0)delete S.override[x]});
+  S.dayType[key]=k;
+  if(DAYTYPES[k].scale!==1)S.items.filter(i=>i.type==='quota'&&!i.paused&&(i.days||[]).includes(dow)).forEach(i=>{S.override[key+'|'+i.id]=Math.max(5,Math.round(i.target*DAYTYPES[k].scale/5)*5)});
+  if(k==='light')S.minDay[key]=true;else delete S.minDay[key];
+  persist();
+}
+/* ---------- how full is today? ---------- */
+function dayLoad(date){
+  const pl=planDay(date),usable=pl.dm.L*(1-BUFFER);let planned=0,must=0;
+  pl.entries.forEach(e=>{if(e.kind==='due'||e.unplaced)return;planned+=e.mins;const it=e.fixed?null:itemById(e.itemId);if(e.kind!=='detox'&&(e.fixed||prOf(it)==='must'))must+=e.mins});
+  return{planned,must,usable,ratio:usable?planned/usable:0,pl};
+}
+function blockLoads(date){
+  const pl=planDay(date),out=pl.dm.blocks.map(b=>({block:b,min:0}));
+  pl.entries.forEach(e=>{if(e.unplaced||e.inRest||e.kind==='due')return;const x=out.find(x=>e.s>=x.block.start&&e.s<x.block.end);if(x)x.min+=e.mins});
+  return out.map(x=>({block:x.block,min:x.min,len:x.block.end-x.block.start,ratio:x.min/(x.block.end-x.block.start)}));
+}
+function essentialEntries(pl){return pl.entries.filter(e=>!e.unplaced&&e.kind!=='due'&&e.kind!=='detox'&&(e.fixed||prOf(itemById(e.itemId))==='must'))}
+function essentialsDone(w,pl){const ess=essentialEntries(pl);return ess.length>0&&ess.every(e=>isDone(e)||(e.fixed&&e.e<=w.off))}
+/* ---------- the next one thing ---------- */
+function nextOne(w,pl){
+  const t=nowMs(),sn=S.snooze||{};
+  const c=pl.entries.filter(e=>!e.unplaced&&e.kind!=='due'&&!e.inRest&&e.mins>0&&!isDone(e)&&!(sn[e.key]>t)&&!(e.fixed&&e.e<=w.off));
+  if(!c.length)return null;
+  const cur=c.find(e=>e.s<=w.off&&w.off<e.e);if(cur)return cur;
+  const up=c.filter(e=>e.s>w.off).sort((a,b)=>a.s-b.s)[0];
+  const rk=e=>prRank(e.fixed?null:itemById(e.itemId));
+  const missed=c.filter(e=>e.s<=w.off&&!e.fixed).sort((a,b)=>rk(a)-rk(b)||a.s-b.s)[0];
+  if(missed&&(!up||up.s-w.off>20||rk(missed)<=rk(up)))return missed;
+  return up||missed||null;
+}
+function chunkInfo(e){
+  if(!e.target)return null;
+  const done=qCount(e.key.split('|')[0],e.itemId),rem=Math.max(0,e.target-done);if(!rem)return null;
+  const chunk=Math.min(rem,Math.max(1,Math.ceil(e.target/3)));
+  return{done,rem,chunk,mins:Math.max(5,Math.round(e.mins*chunk/e.target/5)*5)};
+}
+function modeForEntry(e){
+  if(e.kind==='detox')return 'detox';
+  if(e.fixed)return e.etype==='travel'?'travel':'meeting';
+  const it=itemById(e.itemId)||{},t=(e.title||'').toLowerCase();
+  if(e.kind==='quota'||e.kind==='deadline'||e.kind==='task')return 'work';
+  if(/read|book/.test(t))return 'read';
+  if(it.weight==='light')return 'rest';
+  return 'learn';
+}
+/* ---------- processes under a target ---------- */
+function procCounts(key,id){return (S.proc&&S.proc[key+'|'+id])||{}}
+function bumpProc(key,it,procId,d){
+  const k=key+'|'+it.id;S.proc=S.proc||{};const o=S.proc[k]=S.proc[k]||{};
+  const nv=Math.max(0,(o[procId]||0)+d),delta=nv-(o[procId]||0);o[procId]=nv;
+  S.progress[key]=S.progress[key]||{};S.progress[key][it.id]=Math.max(0,(S.progress[key][it.id]||0)+delta);persist();
+}
+function procTotals(days){
+  const out={},from=whereIs(nowMs()).date;
+  for(let n=0;n<days;n++){const key=dkey(addDays(from,-n));Object.keys(S.proc||{}).forEach(k=>{if(k.indexOf(key+'|')!==0)return;const id=k.split('|')[1];Object.keys(S.proc[k]).forEach(pid=>{(out[id]=out[id]||{})[pid]=(out[id][pid]||0)+S.proc[k][pid]})})}
+  return out;
+}
+/* ---------- stages and approaches ---------- */
+const curStageOf=it=>(it&&it.stages||[]).find(s=>s.id===it.curStage&&!s.done)||(it&&it.stages||[]).find(s=>!s.done)||null;
+function approachMin(it,actId){let m=0;S.log.forEach(l=>{if(l.itemId===it.id&&l.approach===actId)m+=logMin(l)});return m}
 /* ---------- templates, accepting sorted proposals, example data ---------- */
 function mkBuckets(list){return list.map(([name,acts],i)=>({id:uid(),name,color:PALETTE[i%PALETTE.length],activities:acts.map(a=>({id:uid(),name:a}))}))}
 const TEMPLATES={
@@ -950,6 +1029,7 @@ function loadTemplate(key){
     const r=parseText(EXAMPLE_TEXT.routine,S.buckets,'routine'),h=parseText(EXAMPLE_TEXT.habits,S.buckets,'habits'),g=parseText(EXAMPLE_TEXT.goal,S.buckets,'goals');
     acceptProposals([...r.proposals,...h.proposals],g.goals);
     seedIdentity();
+    seedStages();
   }
   persist();
 }
@@ -957,6 +1037,7 @@ function loadTemplate(key){
 function makeSampleHistory(){
   let seed=7;const rnd=()=>{seed=(seed*1664525+1013904223)%4294967296;return seed/4294967296};
   let seed2=11;const rnd2=()=>{seed2=(seed2*1664525+1013904223)%4294967296;return seed2/4294967296};
+  let seed3=23;const rnd3=()=>{seed3=(seed3*1664525+1013904223)%4294967296;return seed3/4294967296};
   const today=whereIs(nowMs()).date,DAYSBACK=28;
   S.log=S.log.filter(l=>!l.sample);
   const habitP=(title,frac)=>{const t=title.toLowerCase();
@@ -984,8 +1065,9 @@ function makeSampleHistory(){
         const r=rnd(),wp=(peak?.72:.35)-(planned===120?.15:0);
         rec.rating=r<wp?'worth':r<wp+.35?'ok':'drained';
       }
+      {const it0=itemById(e.itemId);if(it0&&(it0.stages||[]).length){const st0=curStageOf(it0);if(st0&&st0.acts.length&&(mode==='learn'||mode==='deep'||mode==='read')){rec.approach=st0.acts[Math.floor(rnd3()*st0.acts.length)].id;rec.stage=st0.id}}}
       S.log.push(rec);S.done[e.key]=true;
-      if(e.kind==='quota'&&e.target){S.progress[key]=S.progress[key]||{};S.progress[key][e.itemId]=Math.round(e.target*(.7+rnd()*.35))}
+      if(e.kind==='quota'&&e.target){S.progress[key]=S.progress[key]||{};S.progress[key][e.itemId]=Math.round(e.target*(.7+rnd()*.35));const it1=itemById(e.itemId);if(it1&&(it1.processes||[]).length){const tot=S.progress[key][e.itemId],a1=Math.round(tot*(.4+rnd3()*.35));S.proc=S.proc||{};S.proc[key+'|'+e.itemId]={[it1.processes[0].id]:a1,[it1.processes[1].id]:tot-a1}}}
     });
     [2.0,2.7,2.1].forEach((m,bi)=>{const v=Math.max(1,Math.min(3,Math.round(m+(rnd()-.5)*1.4))),k=energyKey(date,bi);if(!S.energy[k]){S.energy[k]=v;(S.sampleEnergy=S.sampleEnergy||[]).push(k)}});
     const ss=base-dm.sh*60000+Math.round((rnd()-.4)*40)*60000;
@@ -1017,6 +1099,15 @@ function seedIdentity(){
   });
   S.north={id:uid(),title:'Become job-ready as a conversion tracking analyst',why:'So I can move from calls and blogs into analytics work.',due:'2026-12-31',hoursPerWeek:8,created:nowMs()-42*864e5,links:links.map(l=>l.id),milestones:[{id:uid(),title:'Finish the marketing analytics course',done:true,at:nowMs()-10*864e5},{id:uid(),title:'Build a demo dashboard',done:false},{id:uid(),title:'Publish one case study',done:false},{id:uid(),title:'Apply to 10 analytics roles',done:false}]};
   S.ideas=[{id:uid(),title:'Write a short essay every week',type:'creative',links:[links[1].id],note:'',status:'idea'},{id:uid(),title:'Teach one analytics concept on LinkedIn',type:'intellectual',links:[links[0].id],note:'',status:'idea'},{id:uid(),title:'Sketch-note a book chapter',type:'creative',links:[links[1].id],note:'',status:'idea'}];
+}
+
+function seedStages(){
+  const A=(...n)=>n.map(x=>({id:uid(),name:x,done:false})),by=t=>S.items.find(i=>i.title===t);
+  const ct=by('Conversion tracking analytics'),ma=by('Marketing analytics'),rd=by('Reading'),call=S.items.find(i=>i.type==='quota'&&/^Call/.test(i.title));
+  if(ct){const s1={id:uid(),name:'Product analytics',acts:A('Reading documentation','Watching videos','Job post analysis','Demo and portfolio'),done:false},s2={id:uid(),name:'Funnels and attribution',acts:A('Reading documentation','Case studies','Build a funnel report'),done:false};ct.stages=[s1,s2];ct.curStage=s1.id}
+  if(ma){const s1={id:uid(),name:'Three ideas of marketing analytics',acts:A('Reading notes','Assignment'),done:false};ma.stages=[s1];ma.curStage=s1.id}
+  if(rd){const s1={id:uid(),name:'',acts:A('Books','Articles','Documentation'),done:false};rd.stages=[s1];rd.curStage=s1.id}
+  if(call)call.processes=[{id:uid(),name:'Manual call'},{id:uid(),name:'Sales agent outreach'}];
 }
 /* ====================== Quarters: screens (1) ====================== */
 const SVGNS='http://www.w3.org/2000/svg';
@@ -1073,7 +1164,7 @@ function clockHTML(ms){const d=new Date(ms),h=d.getHours(),m=d.getMinutes();if(S
 function blockText(w){
   if(w.inRest)return{a:'Block 4 of 4 · Rest',b:dur((w.dm.L+(1440-w.dm.L)-w.off))+' of rest left in the plan'};
   const left=w.block.end-w.off;
-  return{a:'Block '+(w.bi+1)+' of 4 · '+ROLES[w.block.role].label,b:dur(left)+' left in this block'};
+  return{a:'Block '+(w.bi+1)+' of 4 · '+ROLES[w.block.role].label+(S.themes[w.bi]?' · '+S.themes[w.bi]:''),b:dur(left)+' left in this block'};
 }
 function updateLive(){
   const t=nowMs(),w=whereIs(t);
@@ -1100,11 +1191,13 @@ function vToday(m){
     m.append(el('div',{class:'card'},el('h3',{text:'Welcome to Quarters'}),el('p',{class:'hint',style:'margin-bottom:12px',text:'Your day is cut into four blocks of about six hours. Tell Quarters how your week goes and it will fit your life into them. You stay in control and can change anything.'}),
       el('div',{class:'row'},el('button',{class:'btn',text:'Describe my week in words',onclick:()=>{nav.tab='setup';nav.focus='routine';render()}}),el('button',{class:'ghost',text:'Try an example week',onclick:()=>{loadTemplate('example');makeSampleHistory();toast('Example week loaded');render()}}))));
   }
+  if(S.items.length&&S.calm.on&&!(S.active&&S.active.mode==='deep')){calmToday(m,w,pl);return}
+  if(S.items.length&&!(S.active&&S.active.mode==='deep'))m.append(calmControls());
   // ring + time checker
   const wrap=el('div',{class:'card'});
   const rw=el('div',{class:'ringwrap'},dayRing(w),el('div',{class:'ringc'},el('div',{class:'clock',id:'clk',html:clockHTML(t)}),el('div',{class:'blabel',id:'blk',text:blockText(w).a}),el('div',{class:'bleft',id:'bleft',text:blockText(w).b})));
   wrap.append(rw);
-  wrap.append(el('div',{class:'legend g2'},[...dm.blocks.map(b=>[b.role,'Block '+(b.i+1),clk(dm,b.start),clk(dm,b.end)]),['rest','Block 4',clk(dm,dm.L),dm.wake]].map(([r,l,a,b])=>el('span',{style:(w.inRest&&r==='rest')||(!w.inRest&&w.block.role===r)?'color:var(--ink);font-weight:700':''},el('i',{style:'background:'+ROLES[r].c}),l+'\n'+fT(a)+' to '+fT(b)))));
+  wrap.append(el('div',{class:'legend g2'},[...dm.blocks.map(b=>[b.role,'Block '+(b.i+1)+(S.themes[b.i]?' · '+S.themes[b.i]:''),clk(dm,b.start),clk(dm,b.end)]),['rest','Block 4',clk(dm,dm.L),dm.wake]].map(([r,l,a,b])=>el('span',{style:(w.inRest&&r==='rest')||(!w.inRest&&w.block.role===r)?'color:var(--ink);font-weight:700':''},el('i',{style:'background:'+ROLES[r].c}),l+'\n'+fT(a)+' to '+fT(b)))));
   if(S.active&&S.active.mode==='deep'){m.append(focusCard(t),wrap);return}
   m.append(wrap);
   // now / next
@@ -1116,6 +1209,8 @@ function vToday(m){
     el('b',{style:'font-size:1.05rem;display:block;margin:2px 0',text:cur?cur.title:(w.inRest?'Rest block. Sleep well.':'Nothing is booked right now')}),
     el('div',{class:'hint',text:cur?fT(clk(dm,cur.s))+' to '+fT(clk(dm,cur.e))+'. '+bname(cur.bucket):(nxt?'Next: '+nxt.title+' at '+fT(clk(dm,nxt.s))+' ('+dur(nxt.s-w.off)+' away)':'')})));
   m.append(nc);
+  if(S.items.length&&!S.dayPlanned[pl.key]&&!w.inRest&&w.bi<2)m.append(el('div',{class:'card'},el('b',{style:'font-size:.95rem',text:'Plan today in a minute'}),el('p',{class:'hint',style:'margin:4px 0 10px;line-height:1.45',text:'Say what kind of day it is, add what is different today, and check that it fits.'}),el('button',{class:'btn sm',text:'Plan my day',onclick:openPlanDay})));
+  if(essentialsDone(w,pl))m.append(el('div',{class:'card',style:'border-left:4px solid var(--ok)'},el('b',{text:'Your essentials are done.'}),el('p',{class:'hint',style:'margin:4px 0 0;line-height:1.45',text:'Everything else today is a bonus.'})));
   const bhc=behindCard();if(bhc)m.append(bhc);
   const rvc=reviewCard();if(rvc)m.append(rvc);
   const prc=prioritiesCard();if(prc)m.append(prc);
@@ -1146,6 +1241,7 @@ function vToday(m){
     if(a.mode==='low'){const lights=S.items.filter(i=>i.type==='flex'&&i.weight==='light').slice(0,4);mc.append(el('p',{class:'hint',style:'margin-top:8px',text:'Gentle options: '+(lights.length?lights.map(i=>i.title).join(', '):'a walk, a podcast, a stretch')+'. Low energy is part of the rhythm, not a failure.'}))}
     const links=[...pl.entries.filter(e=>!e.unplaced&&e.kind!=='due').map(e=>({bucket:e.bucket,itemId:e.itemId,label:e.title})),...S.buckets.map(b=>({bucket:b.id,itemId:null,label:b.name}))].filter((x,i,arr)=>arr.findIndex(y=>y.label===x.label)===i);
     mc.append(el('div',{class:'lbl',text:'Link this time to'}),el('div',{class:'row'},links.slice(0,10).map(l=>el('button',{class:'chip'+(a.itemId===l.itemId&&a.bucket===l.bucket&&(l.itemId||a.itemId==null)?' on':''),onclick:()=>{S.active.bucket=l.bucket;S.active.itemId=l.itemId;persist();render()}},el('i',{style:'background:'+bcolor(l.bucket)}),l.label))));
+    {const it2=a.itemId?itemById(a.itemId):null,st2=it2&&it2.type==='flex'?curStageOf(it2):null;if(st2&&st2.acts.length)mc.append(el('div',{class:'lbl',text:'Which activity?'}),el('div',{class:'row'},st2.acts.map(x=>el('button',{class:'chip'+(a.approach===x.id?' on':''),text:x.name,onclick:()=>{S.active.approach=x.id;S.active.stage=st2.id;persist();render()}}))))}
     mc.append(el('div',{class:'row',style:'margin-top:12px'},el('button',{class:'btn',text:'Stop and log it',onclick:endMode})));
     mc.append(el('div',{class:'lbl',style:'margin-top:14px',text:'Or switch to'}));
   }else mc.append(el('h3',{text:'Set your mode'}),el('p',{class:'hint',style:'margin-bottom:10px',text:'Tap what you are doing now. Quarters times it and adds it to your day.'}));
@@ -1154,13 +1250,13 @@ function vToday(m){
   m.append(mc);
   const cpc=capsCard();if(cpc)m.append(cpc);
   // quotas
-  const qs=pl.entries.filter(e=>e.kind==='quota'&&!e.unplaced);
+  const qs=pl.entries.filter(e=>(e.kind==='quota'||(e.kind==='task'&&e.target))&&!e.unplaced);
   if(qs.length){const qc=el('div',{class:'card'},el('h3',{text:'Daily targets'}));
     qs.forEach(e=>{
       const n=qCount(pl.key,e.itemId),it=itemById(e.itemId),pace=paceFor(it);
       const upd=d=>{S.progress[pl.key]=S.progress[pl.key]||{};S.progress[pl.key][e.itemId]=Math.max(0,n+d);persist();render()};
       qc.append(el('div',{class:'qrow'},el('div',{class:'row spread'},el('div',null,el('b',{style:'font-size:.95rem',text:e.title}),el('div',{class:'hint',text:n>=e.target?'Target reached':'About '+dur(pace?pace*(e.target-n):Math.max(0,e.mins*(e.target-n)/e.target))+' to go'+(pace?' at your pace':'')})),el('div',{class:'cnt'},el('button',{'aria-label':'Subtract one',text:'−',onclick:()=>upd(-1)}),el('button',{class:'plus','aria-label':'Add one',text:'+',onclick:()=>upd(1)}),el('button',{text:'+5','aria-label':'Add five',onclick:()=>upd(5)}))),
-        el('div',{class:'bar2'},el('i',{style:'width:'+Math.min(100,Math.round(n/e.target*100))+'%;background:'+(n>=e.target?'var(--ok)':bcolor(e.bucket))})),el('div',{class:'hint',text:n+' of '+e.target+' '+(e.unit||'')})));
+        el('div',{class:'bar2'},el('i',{style:'width:'+Math.min(100,Math.round(n/e.target*100))+'%;background:'+(n>=e.target?'var(--ok)':bcolor(e.bucket))})),el('div',{class:'hint',text:n+' of '+e.target+' '+(e.unit||'')}),it&&(it.processes||[]).length?procRow(it,pl.key):null));
     });
     m.append(qc);
   }
@@ -1233,7 +1329,9 @@ function openMove(e,date){
     st.value=hmm(clk(dm,e.s));en.value=hmm(clk(dm,e.e));
     sh.append(el('label',{class:'lbl',text:'Starts'}),st,el('label',{class:'lbl',text:'Ends'}),en);
     sh.append(el('div',{class:'row',style:'margin-top:6px'},el('button',{class:'btn',text:'Save for this day',onclick:()=>{S.moves[key+'|'+e.itemId]={start:st.value,end:en.value};persist();close();toast('Moved')}}),el('button',{class:'ghost',text:'Skip today',onclick:()=>{S.moves[key+'|'+e.itemId]={skip:true};persist();close();toast('Skipped today')}}),S.moves[key+'|'+e.itemId]?el('button',{class:'ghost',text:'Back to plan',onclick:()=>{delete S.moves[key+'|'+e.itemId];persist();close()}}):null));
-    const it=itemById(e.itemId);if(it)sh.append(el('button',{class:'ghost sm',style:'margin-top:14px',text:'Edit the repeating item',onclick:()=>{close();setTimeout(()=>openItem(it.id),40)}}));
+    const it=itemById(e.itemId);
+    if(it&&it.isTask)sh.append(el('button',{class:'ghost sm danger',style:'margin-top:14px',text:'Remove this task',onclick:()=>{S.tasks=S.tasks.filter(x=>x.id!==it.id);persist();close();toast('Removed')}}));
+    else if(it)sh.append(el('button',{class:'ghost sm',style:'margin-top:14px',text:'Edit the repeating item',onclick:()=>{close();setTimeout(()=>openItem(it.id),40)}}));
   });
 }
 function openEvent(date,ev){
@@ -1277,6 +1375,8 @@ function openItem(id,type,seed){
       body.append(t,el('label',{class:'lbl',text:'Bucket'}),bucketChips(()=>it.bucket,v=>it.bucket=v,true));
       if(S.identity.links.length){it.links=it.links||[];body.append(el('label',{class:'lbl',text:'Serves who I am becoming (optional)'}),linkChips(it.links))}
       if(it.type!=='fixed')body.append(el('label',{class:'lbl',text:'How important is it?'}),el('div',{class:'seg'},[['must','Must'],['should','Should'],['nice','Nice to have']].map(([k,l])=>el('button',{class:prOf(it)===k?'on':'',text:l,onclick:()=>{it.priority=k;paint()}}))));
+      if(it.type==='quota'){const pi=el('input',{class:'field',placeholder:'e.g. Manual call, Sales agent outreach','aria-label':'Ways you do it'});pi.value=(it.processes||[]).map(p=>p.name).join(', ');pi.addEventListener('input',()=>{const ns=pi.value.split(',').map(s=>s.trim()).filter(Boolean);it.processes=ns.map(n=>(it.processes||[]).find(p=>p.name===n)||{id:uid(),name:n})});body.append(el('label',{class:'lbl',text:'The ways you do it (optional)'}),pi,el('p',{class:'hint',text:'Each way gets its own counter, so you can see which one carries you.'}))}
+      if(it.type==='flex'&&id)body.append(el('button',{class:'ghost',style:'margin-top:12px;width:100%',text:(it.stages||[]).length?'Stages and approaches ('+it.stages.length+')':'Add stages and approaches',onclick:()=>{const ix=S.items.findIndex(x=>x.id===it.id);if(ix>=0)S.items[ix]=Object.assign({},S.items[ix],it);persist();close();setTimeout(()=>openStages(it.id),50)}}));
       const num=(label,key,step,suffix)=>{const f=el('input',{class:'field',type:'number',inputmode:'decimal',step:step||1,min:0,'aria-label':label});f.value=it[key];f.addEventListener('input',()=>{it[key]=+f.value});return [el('label',{class:'lbl',text:label}),f]};
       if(it.type==='fixed'){
         const st=el('input',{class:'field',type:'time','aria-label':'Start'}),en=el('input',{class:'field',type:'time','aria-label':'End'});st.value=it.start;en.value=it.end;st.addEventListener('input',()=>it.start=st.value);en.addEventListener('input',()=>it.end=en.value);
@@ -1367,7 +1467,10 @@ function vSetup(m){
   const paintPrev=()=>{const dm=dayMap(nowD());fill(prev,[...dm.blocks.map(b=>[b.role,'Block '+(b.i+1),b.start,b.end]),['rest','Block 4',dm.L,1440]].map(([r,l,a,b])=>el('div',{class:'row',style:'margin:4px 0'},el('i',{class:'dot',style:'background:'+ROLES[r].c}),el('b',{style:'font-size:.88rem',text:l+' · '+ROLES[r].label}),el('span',{class:'hint',text:fT(clk(dm,a))+' to '+fT(clk(dm,b))+' ('+dur(b-a)+')'}))),S.profile.sleep.hours<6?el('p',{class:'hint',style:'color:var(--bad);margin-top:6px',text:'Under six hours of sleep is not sustainable for most people. Quarters will plan around it, but protect your rest when you can.'}):null)};
   st.addEventListener('input',()=>{S.profile.sleep.start=st.value||'23:30';persist();paintPrev()});hr.addEventListener('input',()=>{S.profile.sleep.hours=Math.max(3,Math.min(12,+hr.value||6));persist();paintPrev()});
   dp.append(el('div',{class:'row',style:'gap:10px;flex-wrap:nowrap'},el('div',{style:'flex:1'},el('label',{class:'lbl',text:'I usually go to sleep at'}),st),el('div',{style:'flex:1'},el('label',{class:'lbl',text:'Hours of sleep'}),hr)),el('label',{class:'lbl',text:'I focus best in the'}),el('div',{class:'seg'},[['morning','Morning'],['afternoon','Afternoon'],['evening','Evening']].map(([k,l])=>el('button',{class:S.profile.peak===k?'on':'',text:l,onclick:()=>{S.profile.peak=k;persist();render()}}))));
-  dp.append(el('p',{class:'hint',style:'margin:2px 0 8px;line-height:1.45',text:'Your sleep becomes the Rest block. The waking hours split into three blocks, labelled by when you focus best.'}),prev);paintPrev();
+  const isClock=S.profile.sleep.start==='00:00'&&+S.profile.sleep.hours===6&&!Object.keys(S.profile.override||{}).length;
+  dp.append(el('p',{class:'hint',style:'margin:2px 0 8px;line-height:1.45',text:'Your sleep becomes the Rest block. The waking hours split into three blocks, labelled by when you focus best.'}),
+    el('button',{class:'chip'+(isClock?' on':''),style:'margin-bottom:10px',text:'Use clock blocks: 12 to 6 am sleep, then 6 to 12, 12 to 6, 6 to 12',onclick:()=>{S.profile.sleep={start:'00:00',hours:6};S.profile.override={};persist();toast('Your day now runs in clean six-hour blocks');render()}}),prev);paintPrev();
+  dp.append(themesDetoxUI());
   const ov=el('div');const od=S.profile.override||{};
   dp.append(el('button',{class:'ghost sm',style:'margin-top:10px',text:Object.keys(od).length?'Different sleep on some days ('+Object.keys(od).length+')':'Sleep differently on some days?',onclick:()=>{ov.dataset.open=ov.dataset.open?'':'1';paintOv()}}),ov);
   const paintOv=()=>{ov.replaceChildren();if(!ov.dataset.open)return;
@@ -1653,6 +1756,7 @@ function habitAdvice(it,pts,st){
 }
 function vHabits(m){
   m.append(header('Stats','Habit curves'),statsSeg());
+  {const tcd=tracksCard();if(tcd)m.append(tcd);const pcd=processCard();if(pcd)m.append(pcd)}
   const cd=curveData(),items=S.items.filter(i=>(i.type==='flex'||i.type==='quota')&&!i.paused);
   if(!items.length||!Object.keys(cd).some(k=>cd[k].some(Boolean))){m.append(el('div',{class:'empty',text:'Habit curves appear once you have a few weeks of logs. Check things off and tap modes as you go, or add the sample history in Setup to see the shapes.'}));return}
   const rows=items.map(it=>({it,pts:cd[it.id]||[],st:curveStage(cd[it.id]||[])}));
@@ -2272,6 +2376,210 @@ function behaviorSetupCard(){
     el('div',{class:'row',style:'margin-top:10px'},el('button',{class:'ghost sm',text:'Edit activities and limits',onclick:openActsEditor}),el('button',{class:'ghost sm',text:'Log something I did',onclick:openQuick})));
   return box;
 }
+/* ====================== Quarters: calm screens ====================== */
+function loadBar(L){
+  const pct=Math.round(L.ratio*100),col=L.ratio>1?'var(--bad)':L.ratio>.85?'var(--warn)':'var(--ok)';
+  return el('div',null,el('div',{class:'bar2',style:'height:12px'},el('i',{style:'width:'+Math.min(100,pct)+'%;background:'+col})),el('div',{class:'row spread'},el('span',{class:'hint',text:dur(L.planned)+' planned of '+dur(L.usable)+' usable'}),el('span',{class:'hint',style:'color:'+col+';font-weight:700',text:pct+'%'})));
+}
+function loadVerdict(L){return L.ratio>1?'Overfull by '+dur(L.planned-L.usable)+'. Today cannot hold all of this, so something moves.':L.ratio>.85?'Tight. One surprise would tip it over.':'There is room to breathe.'}
+function calmControls(){
+  return el('div',{class:'row',style:'margin:0 0 10px'},el('button',{class:'chip'+(S.calm.on?' on':''),text:'Calm view',onclick:()=>{S.calm.on=!S.calm.on;persist();render()}}),el('button',{class:'chip',text:'I am overwhelmed',onclick:openOverwhelmed}));
+}
+function startEntry(e,extra){
+  const it=itemById(e.itemId),mode=modeForEntry(e);
+  startMode(mode,Object.assign({bucket:e.bucket,itemId:e.kind==='detox'||(it&&it.isTask)?null:e.itemId},extra||{}));render();
+}
+function addChunk(e,n,procId){
+  const key=e.key.split('|')[0],it=itemById(e.itemId);
+  if(procId&&it)bumpProc(key,it,procId,n);else{S.progress[key]=S.progress[key]||{};S.progress[key][e.itemId]=(S.progress[key][e.itemId]||0)+n;persist()}
+  render();
+}
+function nextCard(w,pl){
+  const e=nextOne(w,pl),dm=w.dm,box=el('div',{class:'card',style:'border:2px solid var(--accent)'});
+  if(!e){box.append(el('span',{class:'tag',style:'background:var(--ok)',text:'All clear'}),el('p',{style:'margin:10px 0 0;font-size:1rem;line-height:1.5',text:'Nothing left on today’s list. Rest, read, or take a walk. You have earned it.'}));return box}
+  const ck=chunkInfo(e),it=itemById(e.itemId),st=it&&it.type==='flex'?curStageOf(it):null,now=e.s<=w.off&&w.off<e.e;
+  box.append(el('span',{class:'tag',style:'background:var(--accent);color:var(--accent-ink)',text:now?'Right now':'Next'}),
+    el('div',{style:'font-family:var(--disp);font-size:1.5rem;font-weight:700;line-height:1.2;margin:10px 0 4px',text:e.title}),
+    el('p',{class:'hint',style:'margin:0 0 6px',text:fT(clk(dm,e.s))+' to '+fT(clk(dm,e.e))+'. '+dur(e.mins)+(e.bucket?'. '+bname(e.bucket):'')}));
+  if(ck)box.append(el('p',{style:'margin:0 0 8px;font-size:.95rem;line-height:1.45',text:'Just do a batch of '+ck.chunk+' ('+ck.done+' of '+e.target+' so far). About '+dur(ck.mins)+'.'}));
+  if(st)box.append(el('p',{style:'margin:0 0 8px;font-size:.92rem;line-height:1.45',text:'Stage: '+(st.name||'Approaches')+'. Pick how you will do it:'}),el('div',{class:'row',style:'margin-bottom:8px'},st.acts.map(a=>el('button',{class:'chip',text:a.name,onclick:()=>startEntry(e,{approach:a.id,stage:st.id})}))));
+  const procs=it&&it.processes&&it.processes.length&&ck?it.processes:null;
+  if(procs)box.append(el('p',{style:'margin:0 0 6px;font-size:.9rem',text:'Log the batch when it is done, by how you did it:'}),el('div',{class:'row',style:'margin-bottom:8px'},procs.map(p=>el('button',{class:'chip',text:p.name+' +'+ck.chunk,onclick:()=>addChunk(e,ck.chunk,p.id)}))));
+  box.append(el('div',{class:'row',style:'margin-top:6px'},
+    el('button',{class:'btn',text:'Start',onclick:()=>startEntry(e)}),
+    el('button',{class:'ghost',text:ck?'Batch done':'Done',onclick:()=>{if(ck)addChunk(e,ck.chunk);else{S.done[e.key]=true;persist();render()}}}),
+    el('button',{class:'ghost',text:'Not now',onclick:()=>{S.snooze[e.key]=nowMs()+30*60000;persist();render()}})));
+  return box;
+}
+function calmToday(m,w,pl){
+  const t=nowMs(),key=pl.key,a=S.active,L=dayLoad(w.date);
+  m.append(el('div',{class:'card',style:'display:flex;align-items:center;gap:14px'},el('div',{class:'clock',id:'clk',style:'font-size:2.1rem',html:clockHTML(t)}),el('div',{style:'flex:1;min-width:0'},el('div',{class:'blabel',id:'blk',style:'margin:0',text:blockText(w).a}),el('div',{class:'bleft',id:'bleft',text:blockText(w).b}))));
+  m.append(calmControls());
+  if(a){
+    const md=modeOf(a.mode),it=a.itemId?itemById(a.itemId):null,st=it&&it.type==='flex'?curStageOf(it):null;
+    const box=el('div',{class:'card',style:'border:2px solid '+md.c},el('div',{class:'row spread'},el('span',{class:'tag',style:'background:'+md.c,text:md.label}),el('span',{class:'hint',text:a.intent||''})),el('div',{class:'timer',id:'acttimer',style:'margin:8px 0',text:timerText(t-a.start)}));
+    if(st&&st.acts.length)box.append(el('div',{class:'lbl',text:'Which activity?'}),el('div',{class:'row'},st.acts.map(x=>el('button',{class:'chip'+(a.approach===x.id?' on':''),text:x.name,onclick:()=>{S.active.approach=x.id;S.active.stage=st.id;persist();render()}}))));
+    box.append(el('button',{class:'btn',style:'width:100%;margin-top:12px',text:'Stop and log it',onclick:endMode}));
+    m.append(box);
+  }else m.append(nextCard(w,pl));
+  if(!S.dayPlanned[key]&&!w.inRest)m.append(el('div',{class:'card'},el('b',{style:'font-size:.95rem',text:'Plan today in a minute'}),el('p',{class:'hint',style:'margin:4px 0 10px;line-height:1.45',text:'Say what kind of day it is, add what is different today, and see if it fits.'}),el('button',{class:'btn sm',text:'Plan my day',onclick:openPlanDay})));
+  if(essentialsDone(w,pl))m.append(el('div',{class:'card',style:'border-left:4px solid var(--ok)'},el('b',{text:'Your essentials are done.'}),el('p',{class:'hint',style:'margin:4px 0 0;line-height:1.45',text:'Everything else today is a bonus. Read, learn, or switch the screens off.'})));
+  const cc=capsCard();if(cc)m.append(cc);
+  m.append(el('div',{class:'card'},el('div',{class:'row spread'},el('h3',{style:'margin:0',text:'Today’s load'}),el('button',{class:'ghost sm',text:'Plan my day',onclick:openPlanDay})),el('div',{style:'margin-top:8px'},loadBar(L)),el('p',{class:'hint',style:'margin-top:6px;line-height:1.45',text:loadVerdict(L)}),L.ratio>.85?el('button',{class:'btn sm',style:'margin-top:8px',text:'Shrink to the essentials',onclick:()=>openEssentials()}):null));
+  const rest=pl.entries.filter(e=>!e.unplaced&&e.kind!=='due'&&!isDone(e)&&!(e.fixed&&e.e<=w.off));
+  const det=el('details',{class:'card'},el('summary',{style:'cursor:pointer;font-weight:600',text:'Rest of today ('+rest.length+')'}));
+  rest.forEach(e=>det.append(el('div',{class:'crow'},el('i',{class:'dot',style:'background:'+bcolor(e.bucket)}),el('div',{class:'ct'},el('b',{text:e.title}),el('small',{text:fT(clk(w.dm,e.s))+' to '+fT(clk(w.dm,e.e))+'. '+dur(e.mins)})))));
+  m.append(det);
+}
+/* ---------- when it is too much ---------- */
+function openOverwhelmed(){
+  sheet((sh,close)=>{
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.15rem',text:'Take a breath'}),el('button',{class:'ghost sm',text:'Close',onclick:close})));
+    sh.append(el('p',{class:'hint',style:'margin-bottom:12px;line-height:1.55',text:'You do not have to do today. You only have to do the next thing. Pick what helps.'}));
+    const P=(t,d,fn)=>sh.append(el('button',{class:'pick',onclick:fn},el('b',{text:t}),el('div',{class:'hint',style:'margin-top:2px',text:d})));
+    P('Show me just the next one thing','Everything else steps out of the way.',()=>{S.calm.on=true;persist();close();toast('Calm view on')});
+    P('Shrink today to the essentials','Keeps your commitments and musts. Lowers targets. Moves the rest on.',()=>{close();setTimeout(openEssentials,40)});
+    P('Take two minutes','A short breathing pause, then one thing to do next.',()=>{close();setTimeout(openBreathe,40)});
+    P('Replan what is left of today','Re-fit the remaining time around what has already happened.',()=>{close();setTimeout(openReplan,40)});
+    sh.append(el('p',{class:'hint',style:'margin-top:14px;line-height:1.55',text:'If this feeling is constant, or it is getting in the way of your life, it is worth talking to someone you trust or a professional. This app can lighten a day, but it cannot replace that.'}));
+  });
+}
+function essentialsPreview(date,scale,userOv){
+  const key=dkey(date),dow=date.getDay(),savedMin=S.minDay[key],savedOv=Object.assign({},S.override);
+  const keep=e=>!e.unplaced&&e.kind!=='due'&&e.kind!=='detox'&&!isDone(e);
+  const before=planDay(date).entries.filter(keep),ov={};
+  S.minDay[key]=true;
+  S.items.filter(i=>i.type==='quota'&&!i.paused&&(i.days||[]).includes(dow)).forEach(i=>{const cur=savedOv[key+'|'+i.id]!=null?savedOv[key+'|'+i.id]:i.target;ov[i.id]=userOv&&userOv[i.id]!=null?userOv[i.id]:Math.max(5,Math.round(cur*scale/5)*5);S.override[key+'|'+i.id]=ov[i.id]});
+  const after=planDay(date).entries.filter(keep);
+  if(savedMin)S.minDay[key]=savedMin;else delete S.minDay[key];S.override=savedOv;
+  return{before,after,ov};
+}
+function openEssentials(){
+  const w=whereIs(nowMs()),date=w.date,key=dkey(date),o={scale:.7,user:{},calm:true};
+  sheet((sh,close)=>{
+    const body=el('div');
+    const paint=()=>{
+      const r=essentialsPreview(date,o.scale,o.user),dm=w.dm,afterIds=new Set(r.after.map(e=>e.itemId)),moved=r.before.filter(e=>!afterIds.has(e.itemId));
+      const qs=S.items.filter(i=>i.type==='quota'&&!i.paused&&(i.days||[]).includes(date.getDay()));
+      fill(body,
+        qs.length?el('div',{class:'card'},el('h3',{text:'Lower today’s targets'}),el('div',{class:'row',style:'margin-bottom:8px'},[[.7,'70%'],[.5,'50%'],[.3,'30%']].map(([v,l])=>el('button',{class:'chip'+(o.scale===v&&!Object.keys(o.user).length?' on':''),text:l,onclick:()=>{o.scale=v;o.user={};paint()}}))),qs.map(i=>{const f=el('input',{class:'field',type:'number',min:'0',inputmode:'numeric','aria-label':'Target for '+i.title,style:'margin:0;width:90px'});f.value=r.ov[i.id];f.addEventListener('change',()=>{o.user[i.id]=Math.max(0,+f.value||0);paint()});return el('div',{class:'row spread',style:'margin:6px 0'},el('span',{style:'font-size:.9rem;flex:1',text:i.title+' (usually '+i.target+')'}),f)})):null,
+        el('div',{class:'card'},el('h3',{text:'Keeping today'}),r.after.length?r.after.map(e=>el('div',{class:'crow'},el('i',{class:'dot',style:'background:'+bcolor(e.bucket)}),el('div',{class:'ct'},el('b',{text:e.title}),el('small',{text:fT(clk(dm,e.s))+' to '+fT(clk(dm,e.e))+'. '+dur(e.mins)+(e.target?'. Target '+e.target:'')})))):el('p',{class:'hint',text:'Nothing left to do. That is a good day.'})),
+        moved.length?el('div',{class:'card'},el('h3',{text:'Moving off today'}),el('p',{class:'hint',style:'margin-bottom:6px;line-height:1.45',text:'None of this counts as missed.'}),moved.map(e=>el('div',{class:'crow'},el('i',{class:'dot',style:'background:'+bcolor(e.bucket)}),el('div',{class:'ct'},el('b',{style:'font-weight:500',text:e.title}))))):null,
+        el('div',{class:'row'},el('button',{class:'chip'+(o.calm?' on':''),text:'Then show just the next one thing',onclick:()=>{o.calm=!o.calm;paint()}})));
+    };
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.15rem',text:'Shrink today'}),el('button',{class:'ghost sm',text:'Cancel',onclick:close})),body);paint();
+    sh.append(el('button',{class:'btn',style:'width:100%;margin-top:8px',text:'Make this today’s plan',onclick:()=>{
+      const r=essentialsPreview(date,o.scale,o.user);S.minDay[key]=true;Object.keys(r.ov).forEach(id=>{S.override[key+'|'+id]=r.ov[id]});if(o.calm)S.calm.on=true;S.dayPlanned[key]=true;persist();close();toast('Today is shrunk to the essentials')}}));
+  },{full:true});
+}
+function openBreathe(){
+  sheet((sh,close)=>{
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.15rem',text:'Two minutes'}),el('button',{class:'ghost sm',text:'Close',onclick:close})));
+    sh.append(el('div',{class:'breathe','aria-hidden':'true'}),el('p',{style:'text-align:center;font-size:1.02rem;line-height:1.6;margin:0 0 8px',text:'Breathe in slowly as the circle grows. Hold. Then breathe out slowly as it shrinks.'}),el('p',{class:'hint',style:'text-align:center;line-height:1.5;margin-bottom:14px',text:'Do this for about two minutes. Let the list wait. It is not going anywhere.'}));
+    sh.append(el('button',{class:'btn',style:'width:100%',text:'I am ready for the next one thing',onclick:()=>{S.calm.on=true;persist();close()}}));
+  });
+}
+/* ---------- plan my day: the manual daily list ---------- */
+function openPlanDay(){
+  const w=whereIs(nowMs()),date=w.date,key=dkey(date),dow=date.getDay();
+  const F={title:'',minutes:30,isCount:false,count:5,minPer:45,priority:'should',block:null};
+  sheet((sh,close)=>{
+    const body=el('div');
+    const paint=()=>{
+      const dt=S.dayType[key],pl=planDay(date),L=dayLoad(date),BL=blockLoads(date),dm=pl.dm;
+      const quotas=S.items.filter(i=>i.type==='quota'&&!i.paused&&(i.days||[]).includes(dow));
+      const rows=pl.entries.filter(e=>!e.fixed&&!e.unplaced&&e.kind!=='due'&&e.kind!=='detox'&&e.kind!=='quota'&&e.kind!=='task').map(e=>({id:e.itemId,title:e.title,mins:e.mins,on:true}));
+      S.items.filter(i=>(i.type==='flex'||i.type==='deadline')&&!i.paused&&S.moves[key+'|'+i.id]&&S.moves[key+'|'+i.id].skip).forEach(i=>rows.push({id:i.id,title:i.title,mins:i.minutes||i.estMin||30,on:false}));
+      const tasks=S.tasks.filter(t=>t.date===key);
+      const f=(ph,v,type,fn,lab)=>{const x=el('input',{class:'field',placeholder:ph,type:type||'text','aria-label':lab||ph,style:'margin:0 0 6px'});x.value=v;x.addEventListener('input',()=>fn(x.value));return x};
+      fill(body,
+        el('div',{class:'lbl',text:'What kind of day is it?'}),
+        el('div',{class:'row'},Object.keys(DAYTYPES).map(k=>el('button',{class:'chip'+(dt===k?' on':''),text:DAYTYPES[k].label,onclick:()=>{setDayType(key,k);paint()}}))),
+        dt?el('p',{class:'hint',style:'margin:6px 0 0;line-height:1.45',text:DAYTYPES[dt].hint}):null,
+        quotas.length?el('div',{class:'card',style:'margin-top:12px'},el('h3',{text:'Targets today'}),quotas.map(i=>{const cur=S.override[key+'|'+i.id]!=null?S.override[key+'|'+i.id]:i.target;return el('div',{class:'row spread',style:'margin:6px 0'},el('span',{style:'font-size:.92rem;flex:1;line-height:1.35',text:i.title}),el('div',{class:'cnt'},el('button',{'aria-label':'Lower '+i.title,text:'−5',onclick:()=>{S.override[key+'|'+i.id]=Math.max(0,cur-5);persist();paint()}}),el('b',{style:'min-width:34px;text-align:center',text:String(cur)}),el('button',{class:'plus','aria-label':'Raise '+i.title,text:'+5',onclick:()=>{S.override[key+'|'+i.id]=cur+5;persist();paint()}})))}),el('p',{class:'hint',style:'margin-top:4px',text:'Only changes today. Your usual target stays.'})):null,
+        rows.length?el('div',{class:'card'},el('h3',{text:'From your week'}),el('p',{class:'hint',style:'margin-bottom:6px',text:'Untick what you will not do today. It will not count as missed.'}),rows.map(r=>el('div',{class:'crow'},el('button',{class:'chk'+(r.on?' on':''),'aria-label':r.title,text:r.on?'✓':'',onclick:()=>{if(r.on)S.moves[key+'|'+r.id]={skip:true};else delete S.moves[key+'|'+r.id];persist();paint()}}),el('div',{class:'ct'},el('b',{style:'font-weight:500',text:r.title}),el('small',{text:dur(r.mins)}))))):null,
+        el('div',{class:'card'},el('h3',{text:'Different today'}),
+          tasks.map(t=>el('div',{class:'crow'},el('i',{class:'dot',style:'background:'+PRIO_C[t.priority||'should']}),el('div',{class:'ct'},el('b',{text:t.title}),el('small',{text:(t.count?t.count+' x '+t.minPer+'m':dur(t.minutes))+' · '+(t.priority||'should')+(t.block!=null?' · block '+(t.block+1):'')})),el('button',{class:'ghost sm',text:'Remove',onclick:()=>{S.tasks=S.tasks.filter(x=>x.id!==t.id);persist();paint()}}))),
+          el('div',{class:'lbl',text:'Add something for today'}),
+          f('e.g. Visit customers, edit the church video',F.title,'text',v=>F.title=v,'Task title'),
+          el('div',{class:'row',style:'margin-bottom:6px'},el('button',{class:'chip'+(!F.isCount?' on':''),text:'Takes some time',onclick:()=>{F.isCount=false;paint()}}),el('button',{class:'chip'+(F.isCount?' on':''),text:'A number of things',onclick:()=>{F.isCount=true;paint()}})),
+          F.isCount?el('div',{class:'row',style:'gap:8px;flex-wrap:nowrap'},el('div',{style:'flex:1'},el('label',{class:'lbl',style:'margin:0 0 4px',text:'How many'}),f('How many',F.count,'number',v=>F.count=+v,'How many')),el('div',{style:'flex:1'},el('label',{class:'lbl',style:'margin:0 0 4px',text:'Minutes each'}),f('Minutes each',F.minPer,'number',v=>F.minPer=+v,'Minutes each'))):el('div',null,el('label',{class:'lbl',style:'margin:0 0 4px',text:'How many minutes'}),f('Minutes',F.minutes,'number',v=>F.minutes=+v,'Minutes')),
+          el('div',{class:'seg'},[['must','Must'],['should','Should'],['nice','Nice']].map(([k,l])=>el('button',{class:F.priority===k?'on':'',text:l,onclick:()=>{F.priority=k;paint()}}))),
+          el('div',{class:'row',style:'margin-bottom:8px'},[[null,'Any block'],[0,'Block 1'],[1,'Block 2'],[2,'Block 3']].map(([v,l])=>el('button',{class:'chip'+(F.block===v?' on':''),text:l,onclick:()=>{F.block=v;paint()}}))),
+          el('button',{class:'btn sm',text:'＋ Add to today',onclick:()=>{
+            if(!F.title.trim()){toast('Name it first.');return}
+            const cnt=F.isCount?Math.max(1,+F.count||1):0,per=Math.max(5,+F.minPer||30),mins=F.isCount?cnt*per:Math.max(5,+F.minutes||30);
+            S.tasks.push({id:uid(),date:key,title:F.title.trim(),minutes:mins,count:cnt,minPer:per,unit:'',priority:F.priority,block:F.block});
+            F.title='';persist();paint()}})),
+        el('div',{class:'card'},el('h3',{text:'Does it fit?'}),loadBar(L),el('p',{style:'margin:8px 0 0;font-size:.92rem;line-height:1.5',text:loadVerdict(L)}),
+          BL.filter(b=>b.ratio>=.85).map(b=>el('p',{style:'margin:6px 0 0;font-size:.86rem;color:var(--warn)',text:'Block '+(b.block.i+1)+(S.themes[b.block.i]?' ('+S.themes[b.block.i]+')':'')+' is '+Math.round(b.ratio*100)+'% full.'})),
+          pl.entries.filter(e=>e.unplaced).length?el('p',{style:'margin:6px 0 0;font-size:.88rem;color:var(--bad);line-height:1.45',text:'Did not fit anywhere today: '+pl.entries.filter(e=>e.unplaced).map(e=>e.title).join(', ')+'.'}):null,
+          L.ratio>.85?el('button',{class:'ghost sm',style:'margin-top:10px',text:'Shrink to the essentials',onclick:()=>{close();setTimeout(openEssentials,40)}}):null));
+    };
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.15rem',text:'Plan my day'}),el('button',{class:'ghost sm',text:'Close',onclick:close})),body);paint();
+    sh.append(el('button',{class:'btn',style:'width:100%;margin-top:8px',text:'Done planning',onclick:()=>{S.dayPlanned[key]=true;persist();close();toast('Today is planned')}}));
+  },{full:true});
+}
+/* ---------- stages, approaches, processes ---------- */
+function openStages(id){
+  const it=S.items.find(i=>i.id===id);if(!it)return;
+  const stages=JSON.parse(JSON.stringify(it.stages||[]));let cur=it.curStage||null;
+  sheet((sh,close)=>{
+    const body=el('div');
+    const paint=()=>{
+      fill(body,stages.map(st=>{
+        const c=el('div',{class:'card',style:'padding:12px'+(st.id===cur&&!st.done?';border:2px solid var(--accent)':'')});
+        const nm=el('input',{class:'field',placeholder:'Stage name, e.g. Product analytics (optional)','aria-label':'Stage name'});nm.value=st.name||'';nm.addEventListener('input',()=>st.name=nm.value);
+        const ac=el('textarea',{class:'field',style:'min-height:72px','aria-label':'Activities',placeholder:'Activities, separated by commas. For example: Reading documentation, Watching videos, Demo'});ac.value=(st.acts||[]).map(a=>a.name).join(', ');
+        ac.addEventListener('input',()=>{const names=ac.value.split(/[,\n]/).map(s=>s.trim()).filter(Boolean);st.acts=names.map(n=>(st.acts||[]).find(a=>a.name===n)||{id:uid(),name:n,done:false})});
+        c.append(el('div',{class:'row spread'},el('span',{class:'tag',style:'background:'+(st.done?'var(--ok)':st.id===cur?'var(--accent)':'var(--muted)'),text:st.done?'Complete':st.id===cur?'Current':'Later'})),nm,ac);
+        const r=el('div',{class:'row'});
+        if(!st.done&&st.id!==cur)r.append(el('button',{class:'ghost sm',text:'Make current',onclick:()=>{cur=st.id;paint()}}));
+        r.append(el('button',{class:'ghost sm',text:st.done?'Reopen':'Mark complete',onclick:()=>{st.done=!st.done;if(st.done&&cur===st.id)cur=(stages.find(x=>!x.done)||{}).id||null;paint()}}));
+        const d=el('button',{class:'ghost sm danger',text:'Remove'});armDelete(d,'remove',()=>{const i=stages.indexOf(st);stages.splice(i,1);if(cur===st.id)cur=null;paint()});r.append(d);
+        c.append(r);return c;
+      }),el('button',{class:'ghost sm',text:'＋ Add a stage',onclick:()=>{const s={id:uid(),name:'',acts:[],done:false};stages.push(s);if(!cur)cur=s.id;paint()}}));
+    };
+    sh.append(el('div',{class:'bar3'},el('b',{style:'font-size:1.1rem',text:it.title}),el('button',{class:'ghost sm',text:'Cancel',onclick:close})));
+    sh.append(el('p',{class:'hint',style:'margin-bottom:10px;line-height:1.5',text:'A stage is where you are in this track, with the activities you do inside it. For a habit like Reading, use one stage, leave its name blank, and list your approaches.'}),body);paint();
+    sh.append(el('button',{class:'btn',style:'width:100%;margin-top:10px',text:'Save',onclick:()=>{it.stages=stages;it.curStage=(cur&&stages.some(s=>s.id===cur&&!s.done))?cur:((stages.find(s=>!s.done)||{}).id||null);persist();close();toast('Saved')}}));
+  },{full:true});
+}
+function procRow(it,key){
+  const c=procCounts(key,it.id);
+  return el('div',{style:'margin:6px 0 2px'},it.processes.map(p=>el('div',{class:'row spread',style:'margin:4px 0'},el('span',{style:'font-size:.86rem;flex:1',text:p.name}),el('div',{class:'cnt'},el('button',{'aria-label':'Subtract one '+p.name,text:'−',onclick:()=>{bumpProc(key,it,p.id,-1);render()}}),el('b',{style:'min-width:28px;text-align:center',text:String(c[p.id]||0)}),el('button',{class:'plus','aria-label':'Add one '+p.name,text:'+',onclick:()=>{bumpProc(key,it,p.id,1);render()}})))));
+}
+function tracksCard(){
+  const its=S.items.filter(i=>i.type==='flex'&&!i.paused&&(i.stages||[]).length);if(!its.length)return null;
+  const box=el('div',{class:'card'},el('h3',{text:'Learning tracks'}));
+  its.forEach(it=>{
+    const st=curStageOf(it),all=it.stages.length,done=it.stages.filter(s=>s.done).length;
+    box.append(el('div',{style:'margin:12px 0 4px'},el('b',{style:'font-size:.98rem',text:it.title}),el('span',{class:'hint',text:'  '+(done?done+' of '+all+' stages complete':'')})));
+    if(!st){box.append(el('p',{class:'hint',style:'line-height:1.45',text:'Every stage is complete. Add the next one when you are ready.'}),el('button',{class:'ghost sm',text:'Edit stages',onclick:()=>openStages(it.id)}));return}
+    box.append(el('p',{style:'margin:0 0 6px;font-size:.88rem',text:'Stage: '+(st.name||'Approaches')}));
+    const mx=Math.max(1,...st.acts.map(a=>approachMin(it,a.id)));
+    st.acts.forEach(a=>{const m=approachMin(it,a.id);box.append(el('div',{class:'crow',style:'padding:6px 0'},el('button',{class:'chk'+(a.done?' on':''),'aria-label':a.name+' done',text:a.done?'✓':'',onclick:()=>{a.done=!a.done;persist();render()}}),el('div',{class:'ct'},el('b',{style:'font-weight:500;font-size:.9rem',text:a.name}),el('div',{class:'bar2',style:'height:6px;margin:4px 0 0'},el('i',{style:'width:'+Math.round(m/mx*100)+'%;background:var(--accent)'}))),el('span',{class:'hint',text:m?dur(m):'-'})))});
+    const dn=st.acts.filter(a=>a.done).length;
+    box.append(el('div',{class:'row',style:'margin-top:8px'},el('span',{class:'hint',style:'flex:1',text:dn+' of '+st.acts.length+' ticked'}),el('button',{class:'ghost sm',text:'Edit',onclick:()=>openStages(it.id)}),st.name?el('button',{class:'btn sm',text:'Complete this stage',onclick:()=>{st.done=true;st.doneAt=nowMs();it.curStage=(it.stages.find(s=>!s.done)||{}).id||null;persist();toast('Stage complete'+(it.curStage?'. Next: '+(it.stages.find(s=>s.id===it.curStage).name||'next stage'):''));render()}}):null));
+  });
+  return box;
+}
+function processCard(){
+  const qs=S.items.filter(i=>i.type==='quota'&&(i.processes||[]).length);if(!qs.length)return null;
+  const tot=procTotals(7),box=el('div',{class:'card'},el('h3',{text:'Targets by process'}),el('p',{class:'hint',style:'margin-bottom:6px',text:'Last 7 days.'}));let any=false;
+  qs.forEach(it=>{const t=tot[it.id]||{},sum=Object.values(t).reduce((a,b)=>a+b,0);if(!sum)return;any=true;
+    const mx=Math.max(...it.processes.map(p=>t[p.id]||0),1),top=it.processes.slice().sort((a,b)=>(t[b.id]||0)-(t[a.id]||0))[0];
+    box.append(el('b',{style:'font-size:.92rem;display:block;margin-top:8px',text:it.title}),...it.processes.map(p=>barItem(p.name,'#5b6cff',t[p.id]||0,mx,String(t[p.id]||0))),el('p',{class:'hint',style:'line-height:1.45',text:Math.round((t[top.id]||0)/sum*100)+'% of the total came through '+top.name+'. This counts results, not time, so it shows what you rely on, not what is faster.'}))});
+  if(!any)return null;return box;
+}
+function themesDetoxUI(){
+  const box=el('div');
+  box.append(el('label',{class:'lbl',style:'margin-top:12px',text:'Give each block a theme (optional)'}));
+  [0,1,2].forEach(i=>{const f=el('input',{class:'field',style:'margin:0 0 6px',placeholder:['e.g. Earn','e.g. Earn and build','e.g. Learn and unplug'][i],'aria-label':'Block '+(i+1)+' theme'});f.value=S.themes[i]||'';f.addEventListener('input',()=>{S.themes[i]=f.value;persist()});box.append(f)});
+  box.append(el('label',{class:'lbl',style:'margin-top:8px',text:'Screens-off time before sleep'}),el('div',{class:'row'},el('button',{class:'chip'+(S.detox.on?' on':''),text:S.detox.on?'On':'Off',onclick:()=>{S.detox.on=!S.detox.on;persist();render()}}),S.detox.on?[30,60,90].map(m=>el('button',{class:'chip'+(S.detox.minutes===m?' on':''),text:m+' min',onclick:()=>{S.detox.minutes=m;persist();render()}})):null));
+  box.append(el('p',{class:'hint',style:'margin-top:6px;line-height:1.45',text:'A protected window at the end of your last block: no screens, just a book, a walk, or people. It shows in your plan and counts when you log Detox.'}));
+  return box;
+}
 /* ====================== Quarters: Google Drive sync (installed version) ====================== */
 const SYNC={scope:'https://www.googleapis.com/auth/drive.appdata',token:null,exp:0,busy:false,err:'',note:'',timer:null,needsAuth:false};
 const syncMeta=()=>{try{return JSON.parse(localStorage.getItem('quarters:syncmeta'))||{}}catch(e){return {}}};
@@ -2320,7 +2628,7 @@ async function writeJson(name,obj,id){
   return j.id;
 }
 /* what travels: everything except things that belong to this device only */
-const LOCAL_ONLY=['active','nudgeSkip','sample','sampleEnergy','log','updated'];
+const LOCAL_ONLY=['active','nudgeSkip','sample','sampleEnergy','log','updated','snooze'];
 function corePayload(){const o={};Object.keys(S).forEach(k=>{if(LOCAL_ONLY.indexOf(k)<0)o[k]=S[k]});return o}
 const monthOf=ms=>{const d=new Date(ms);return d.getFullYear()+'-'+pad(d.getMonth()+1)};
 function mergeLogs(local,remote){
